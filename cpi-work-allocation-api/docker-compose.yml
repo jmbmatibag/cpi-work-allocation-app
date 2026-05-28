@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cpi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cpi
+      POSTGRES_PASSWORD: cpi_dev_password
+      POSTGRES_DB: cpi_work_allocation
+    ports:
+      - "5433:5432"
+    volumes:
+      - cpi_pgdata:/var/lib/postgresql/data
+
+volumes:
+  cpi_pgdata:

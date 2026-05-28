@@ -1,0 +1,301 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ────────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  Employee
+  Manager
+  Head
+  Finance
+  Admin
+}
+
+enum AllocationStatus {
+  Draft
+  PendingReview
+  Approved
+  NeedsRevision
+}
+
+// ── Core domain models ───────────────────────────────────────────────────────
+
+model User {
+  // Human-readable prefixed ids preserved from localStorage: EMP001, MGR001,
+  // FIN001, HEAD001, ADM001. New records get the same prefix logic — the
+  // prefix is derived from the user's highest-privilege role (see
+  // primaryRole() in cpi-work-allocation-shared).
+  id           String   @id
+  firstName    String
+  lastName     String
+  email        String   @unique
+  // bcrypt hash of the user's account password. Nullable because admin-created
+  // accounts are issued a one-time `passwordSetupToken` and have no hash until
+  // the user completes the setup flow (POST /api/auth/setup-password). Login
+  // (POST /api/auth/login) treats a null hash as "account not set up" and
+  // refuses sign-in until the setup flow runs.
+  passwordHash String?
+  // One-time secure token mailed to the user when an admin creates their
+  // account. The token is the URL-safe base64 of 32 random bytes; lookups
+  // are constant-time on the unique index. Cleared (set to null) the
+  // moment the user redeems it.
+  passwordSetupToken     String?   @unique
+  // Expiry stamp for `passwordSetupToken`. Tokens past this point are
+  // rejected at /api/auth/setup-password. 24-hour TTL by default — long
+  // enough to survive a delayed inbox, short enough that an unredeemed
+  // link from a months-old admin action can't be exploited.
+  passwordSetupExpiresAt DateTime?
+  // One-time secure token mailed during the forgot-password flow. Same
+  // entropy as the setup token. Cleared the moment the user redeems it.
+  passwordResetToken     String?   @unique
+  // Expiry stamp for `passwordResetToken`. 1-hour TTL — tighter than the
+  // setup token because the user already has an account and is actively
+  // resetting; a shorter window limits exposure from a leaked token.
+  passwordResetExpiresAt DateTime?
+  // Multi-role: a user can wear multiple hats simultaneously (e.g. an IT
+  // Director who is also an Admin, or a Department Head who is also a
+  // Manager and an Employee). Permissions are the UNION of the listed
+  // roles; pages that need a single role (landing page, ID prefix) call
+  // primaryRole() to pick the highest-privilege one.
+  //
+  // Postgres native enum array — same query ergonomics as a junction
+  // table for the read patterns we have ("does user X have role Y?"),
+  // without the extra table or join. Filter with `roles: { has: 'Admin' }`
+  // in Prisma; equivalent to `'Admin' = ANY(roles)` in SQL.
+  roles        UserRole[]
+  team         String
+  managerId    String?
+  jobTitle     String
+
+  manager    User?  @relation("Reports", fields: [managerId], references: [id])
+  reports    User[] @relation("Reports")
+
+  allocations        AllocationRecord[] @relation("EmployeeRecords")
+  managedAllocations AllocationRecord[] @relation("ManagerRecords")
+  journalEntries     JournalEntry[]
+  auditLogs          AuditLog[]
+  otpCodes           OtpCode[]
+  refreshTokens      RefreshToken[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([managerId])
+  // Note: no btree index on `roles` — Postgres can't btree array columns.
+  // Filter-by-role at this scale (≤ thousands of users) is a fast scan;
+  // add a GIN index later if the user table grows past tens of thousands.
+}
+
+model AllocationRecord {
+  // Frontend ids: "ALC-2026-1020". Preserved as-is on import; auto-generated
+  // on new records using the same pattern.
+  id         String           @id
+  employeeId String
+  team       String
+  managerId  String?
+  month      String           // "January" … "December"
+  year       String           // "2026"
+  monthIndex Int              // 0–11
+  status     AllocationStatus @default(Draft)
+
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+  feedback    String?
+
+  // Denormalised audit stamp for manager-side edits (mirrors lastEditedBy in
+  // the frontend). Separate from AuditLog — this is the "last editor" shown
+  // in the review UI; AuditLog captures the full history.
+  lastEditedByUserId   String?
+  lastEditedByUserName String?
+  lastEditedAt         DateTime?
+
+  employee   User  @relation("EmployeeRecords", fields: [employeeId], references: [id])
+  manager    User? @relation("ManagerRecords", fields: [managerId], references: [id])
+
+  activities AllocationActivity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([employeeId, month, year])
+  @@index([managerId])
+  @@index([status])
+  @@index([year, monthIndex])
+}
+
+model AllocationActivity {
+  // UUID preserved from frontend (crypto.randomUUID()) so flag lookups by
+  // activityId remain stable across import → API round-trips.
+  id             String  @id @default(uuid())
+  recordId       String
+  streamCategory String  // "IT", "Projects", "General Work" …
+  subCategory    String? // "Geniisys", "Quick Policy" — null for non-Project streams
+  workType       String
+  client         String
+  description    String
+  percentage     Float
+
+  // Position of the parent stream and this activity within it. Needed to
+  // reconstruct the ordered WorkStreamData[] on read without relying on
+  // insertion order.
+  streamOrder   Int
+  activityOrder Int
+
+  // Flag fields mirror AllocationRecord.flags (Record<activityId, ActivityFlag>).
+  // Storing inline avoids a join on every record read.
+  flagReason String?
+  flaggedAt  DateTime?
+
+  record AllocationRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Prisma does NOT auto-create indexes on FKs in Postgres.
+  @@index([recordId])
+}
+
+model JournalEntry {
+  id         String  @id @default(uuid())
+  employeeId String
+  date       String  // "YYYY-MM-DD" — kept as string to match localStorage key
+  content    String
+  // Parsed TimeBlock[] cached from the last aggregation run. Nullable because
+  // raw-text entries are valid without blocks; blocks are populated lazily by
+  // the AI aggregation endpoint.
+  blocks     Json?
+
+  // Cascade so admin user-deletes don't fail on existing journal rows.
+  employee User @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([employeeId, date])
+  @@index([employeeId, date])
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid())
+  userId       String
+  // SHA-256 hash of the raw token. We never store the raw token; lookups are
+  // constant-time on the unique index. SHA-256 (not bcrypt) because the
+  // tokens are 512 bits of random — bcrypt's slowness is wasted on
+  // high-entropy inputs.
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  // When this token is rotated, its successor is linked here. Useful for
+  // tracing a session lineage during an incident investigation.
+  replacedById String?
+  // Captured at issue time so admins can recognize the device a session
+  // belongs to (e.g. "log out my old phone").
+  userAgent    String?
+  ip           String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model OtpCode {
+  id        Int      @id @default(autoincrement())
+  userId    String
+  codeHash  String   // bcrypt hash of the 6-digit one-time code
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  // Failed-verify counter. Hard lockout (mark used) after MAX_OTP_ATTEMPTS so
+  // a brute-forcer can't keep guessing the same live code.
+  attempts  Int      @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, used, expiresAt])
+}
+
+model AuditLog {
+  id       Int     @id @default(autoincrement())
+  userId   String? // null for system-generated events
+  action   String  // "create" | "update" | "delete" | "approve" | "return" …
+  entity   String  // "AllocationRecord" | "User" | "JournalEntry" …
+  entityId String
+  payload  Json?   // before/after snapshot or diff
+
+  // SetNull preserves the audit row when the actor is deleted — never lose history.
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+// ── Taxonomy / config ────────────────────────────────────────────────────────
+// These mirror the ClientsConfigContext's admin-editable lists.
+// Stored normalised so renames are a single UPDATE and CRUD is straightforward.
+
+model Team {
+  id        Int    @id @default(autoincrement())
+  name      String @unique
+  sortOrder Int    @default(0)
+}
+
+model Client {
+  id        Int    @id @default(autoincrement())
+  name      String @unique
+  sortOrder Int    @default(0)
+}
+
+model MainCategory {
+  id        Int    @id @default(autoincrement())
+  name      String @unique
+  sortOrder Int    @default(0)
+
+  subCategories SubCategory[]
+}
+
+model SubCategory {
+  id               Int    @id @default(autoincrement())
+  name             String @unique
+  mainCategoryId   Int
+  // Client names associated with this sub-category (Projects taxonomy).
+  // String[] maps to a PostgreSQL text[] column — no join table needed for
+  // this simple ordered list.
+  clients          String[]
+  sortOrder        Int    @default(0)
+
+  mainCategory MainCategory @relation(fields: [mainCategoryId], references: [id], onDelete: Cascade)
+
+  @@index([mainCategoryId])
+}
+
+model WorkType {
+  id       Int      @id @default(autoincrement())
+  name     String   @unique
+  // Names of main categories or sub categories this work type applies to.
+  // Many-to-many via String[] avoids a polymorphic junction table; the names
+  // are enforced at the application layer (same as the frontend).
+  parents  String[]
+}
+
+model InferenceRule {
+  id          Int      @id @default(autoincrement())
+  keywords    String[] // case-insensitive substrings scored against journal text
+  category    String
+  subCategory String?
+  workType    String
+  sortOrder   Int      @default(0)
+}

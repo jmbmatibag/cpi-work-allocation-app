@@ -1,0 +1,373 @@
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
+import WorkPeriodPicker from "@/components/WorkPeriodPicker";
+import ProgressRing from "@/components/ProgressRing";
+import Workspace, { WorkStreamData } from "@/components/Workspace";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
+import { CheckCircle, AlertTriangle, Flag } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useJournal } from "@/contexts/JournalContext";
+import {
+  useAllocations,
+  AllocationStatus,
+  MONTH_NAMES,
+} from "@/contexts/AllocationsContext";
+import { useClientsConfig } from "@/contexts/ClientsConfigContext";
+import { useEmployees } from "@/contexts/EmployeesContext";
+import { useNotifications } from "@/contexts/NotificationsContext";
+import { sumPercentages } from "@/lib/allocationMath";
+import {
+  aggregateJournalEntries,
+  formatAggregationAsPrompt,
+} from "@/lib/journalAggregation";
+
+const MonthlyAllocations = () => {
+  const { currentUser } = useAuth();
+  const { getEntriesForMonth } = useJournal();
+  const { getRecord, upsertDraft, submitForReview } = useAllocations();
+  const { clients } = useClientsConfig();
+  const { employees } = useEmployees();
+  const { addNotification } = useNotifications();
+
+  // Deep-link support: a `?month=April&year=2026` query string (from
+  // the dashboard's Needs Revision callout) prefills the picker on
+  // mount. Missing or invalid params fall through to the empty
+  // locked-workspace state.
+  const [searchParams] = useSearchParams();
+  const [month, setMonth] = useState(() => {
+    const p = searchParams.get("month") ?? "";
+    return MONTH_NAMES.includes(p) ? p : "";
+  });
+  const [year, setYear] = useState(() => {
+    const p = searchParams.get("year") ?? "";
+    return /^\d{4}$/.test(p) ? p : "";
+  });
+  const [streams, setStreams] = useState<WorkStreamData[]>([]);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [successOpen, setSuccessOpen] = useState(false);
+  const [trackingId, setTrackingId] = useState("");
+  const [promptText, setPromptText] = useState<string>("");
+
+  const grandTotal = useMemo(
+    () =>
+      sumPercentages(
+        streams.flatMap((s) => s.activities.map((a) => a.percentage)),
+      ),
+    [streams],
+  );
+
+  const isLocked = !month || !year;
+
+  const existingRecord = useMemo(() => {
+    if (!currentUser || !month || !year) return undefined;
+    return getRecord(currentUser.id, month, year);
+  }, [currentUser, month, year, getRecord]);
+
+  const status: AllocationStatus = existingRecord?.status ?? "Draft";
+  const isReadOnly = status === "Pending Review" || status === "Approved";
+
+  const flagCount = useMemo(
+    () =>
+      existingRecord?.flags ? Object.keys(existingRecord.flags).length : 0,
+    [existingRecord],
+  );
+
+  // Track which record id we last hydrated streams from. A ref, not
+  // state, because it's bookkeeping — mutating it shouldn't trigger
+  // a re-render.
+  //
+  // Why not just depend on `existingRecord` in the sync effect? The
+  // context's records array is rewritten on every mutation, so
+  // `existingRecord` gets a new object reference after any write —
+  // even our own no-op writes. A reference-based effect would re-sync
+  // `streams` after every persist, wiping user edits mid-typing. The
+  // ref check ensures we only sync when the *identity* changes (user
+  // picked a different month/year, or the record transitioned from
+  // "doesn't exist" to "exists" and vice versa).
+  const lastSyncedRecordId = useRef<string | null | "none">("none");
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  useEffect(() => {
+    const targetId = existingRecord?.id ?? null;
+    if (lastSyncedRecordId.current === targetId) return;
+    lastSyncedRecordId.current = targetId;
+    setStreams(existingRecord ? existingRecord.streams : []);
+    setPromptText("");
+    setIsHydrated(true);
+  }, [existingRecord]);
+
+  useEffect(() => {
+    // Wait for the sync effect above to land before we start
+    // persisting. On deep-link arrival, React runs both effects in
+    // the same commit; without this gate, the persist effect would
+    // fire first with streams=[] and write an empty record over the
+    // real one. The flag is set at the end of the sync effect, so by
+    // the next render cycle we're safe to persist.
+    if (!isHydrated) return;
+    if (!currentUser || !month || !year) return;
+    if (isReadOnly) return;
+    if (streams.length === 0 && !existingRecord) return;
+
+    // Content guard: skip the upsert when streams already match the
+    // stored record. Defense in depth — AllocationsContext's
+    // upsertDraft also has an idempotence check, but catching the
+    // no-op here saves the context round-trip.
+    if (
+      existingRecord &&
+      JSON.stringify(existingRecord.streams) === JSON.stringify(streams)
+    ) {
+      return;
+    }
+
+    upsertDraft({
+      id: existingRecord?.id ?? generateDraftId(year),
+      employeeId: currentUser.id,
+      employeeName: `${currentUser.firstName} ${currentUser.lastName}`,
+      employeeEmail: currentUser.email,
+      team: currentUser.team,
+      managerId: currentUser.managerId ?? "",
+      managerName: currentUser.managerName,
+      month,
+      year,
+      monthIndex: MONTH_NAMES.indexOf(month),
+      streams,
+      status: status === "Needs Revision" ? "Needs Revision" : "Draft",
+      feedback: existingRecord?.feedback,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streams]);
+
+  const handleMonthChange = useCallback((m: string) => setMonth(m), []);
+  const handleYearChange = useCallback((y: string) => setYear(y), []);
+
+  const handleSubmit = () => {
+    if (grandTotal !== 100) {
+      toast.error(
+        `Total allocation must equal exactly 100% (Current: ${grandTotal}%)`,
+      );
+      return;
+    }
+    setConfirmOpen(true);
+  };
+
+  const confirmSubmit = async () => {
+    if (!currentUser) return;
+    setConfirmOpen(false);
+    try {
+      // Await the upsert+submit chain so the success dialog and the
+      // in-app notification only fire AFTER the backend has actually
+      // persisted the PendingReview status with the final card state.
+      // Previously the success UI fired optimistically, hiding silent
+      // backend failures (autosave race → submit no-op → record stayed
+      // Draft with empty cards on reload).
+      const id = await submitForReview(currentUser.id, month, year, streams);
+      if (!id) {
+        toast.error("Submission failed — please try again.", {
+          description: "Could not persist your allocation.",
+        });
+        return;
+      }
+      setTrackingId(id);
+      setSuccessOpen(true);
+
+      if (currentUser.managerId) {
+        const manager = employees.find((e) => e.id === currentUser.managerId);
+        addNotification({
+          targetUserId: currentUser.managerId,
+          title: "New Allocation Submission",
+          message: `${currentUser.firstName} ${currentUser.lastName} has submitted their allocation for ${month} ${year}.`,
+          type: "info",
+          actionUrl: "/team-hub",
+        });
+      }
+    } catch (err) {
+      toast.error("Submission failed.", {
+        description: (err as Error)?.message ?? "Unknown error",
+      });
+    }
+  };
+
+  const handleAutoGenerate = () => {
+    if (!currentUser) return;
+    if (!month || !year) {
+      toast.error("Please select a work period first.");
+      return;
+    }
+
+    const monthIdx = MONTH_NAMES.indexOf(month);
+    const entries = getEntriesForMonth(currentUser.id, parseInt(year, 10), monthIdx);
+
+    if (entries.length === 0) {
+      toast.error("No journal entries found for this month.", {
+        description: "Log your daily tasks first in the Daily Journal.",
+      });
+      return;
+    }
+
+    toast.info("Analyzing journal entries...", {
+      description: `Processing ${entries.length} daily entries.`,
+    });
+
+    const items = aggregateJournalEntries(entries, {
+      knownClients: clients,
+    });
+
+    if (items.length === 0) {
+      toast.error("Could not extract tasks from journal entries.");
+      return;
+    }
+
+    setPromptText(formatAggregationAsPrompt(items));
+    toast.success(
+      `Aggregated ${items.length} task buckets — review & edit, then generate cards.`,
+    );
+  };
+
+  const statusColor =
+    status === "Draft"          ? "bg-muted text-muted-foreground"
+    : status === "Pending Review" ? "bg-amber-100 text-amber-800"
+    : status === "Needs Revision" ? "bg-orange-100 text-orange-800"
+    :                               "bg-green-100 text-green-800";
+
+  return (
+    <div className="flex h-[calc(100vh-3rem)]">
+      <div className="w-[35%] bg-secondary/30 p-6 flex flex-col gap-6 overflow-y-auto border-r">
+        {currentUser && (
+          <div className="glass-card rounded-xl p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="font-semibold text-foreground">
+                {currentUser.firstName} {currentUser.lastName}
+              </p>
+              <Badge className={statusColor}>{status}</Badge>
+            </div>
+            <div className="text-sm space-y-1">
+              <div>
+                <span className="text-muted-foreground">Team:</span>{" "}
+                <span className="font-medium">{currentUser.team}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Manager:</span>{" "}
+                <span className="font-medium">{currentUser.managerName}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {status === "Needs Revision" && (
+          <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 space-y-2">
+            <div className="flex items-center gap-2 text-orange-800">
+              <AlertTriangle className="h-4 w-4" />
+              <p className="font-semibold text-sm">
+                Manager requested revisions
+              </p>
+            </div>
+            {existingRecord?.feedback && (
+              <p className="text-xs text-orange-900/90 leading-relaxed">
+                {existingRecord.feedback}
+              </p>
+            )}
+            {flagCount > 0 && (
+              <p className="text-xs text-orange-900/90 flex items-center gap-1.5">
+                <Flag className="h-3 w-3" />
+                {flagCount} {flagCount === 1 ? "card is" : "cards are"} flagged — see orange highlights in the workspace.
+              </p>
+            )}
+          </div>
+        )}
+
+        <WorkPeriodPicker
+          month={month}
+          year={year}
+          onMonthChange={handleMonthChange}
+          onYearChange={handleYearChange}
+        />
+        <ProgressRing percentage={grandTotal} />
+      </div>
+
+      <div className="w-[65%] p-6 flex flex-col">
+        <Workspace
+          streams={streams}
+          onStreamsChange={isReadOnly ? () => {} : setStreams}
+          locked={isLocked}
+          grandTotal={grandTotal}
+          onSubmit={handleSubmit}
+          employeeTeam={currentUser?.team}
+          submitLabel={
+            status === "Needs Revision"
+              ? "Resubmit to Manager"
+              : "Submit to Manager"
+          }
+          disabled={isReadOnly}
+          onAutoGenerate={handleAutoGenerate}
+          showAutoGenerate={!isLocked && !isReadOnly}
+          promptText={promptText}
+          flags={existingRecord?.flags}
+        />
+      </div>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Submit Allocation to Manager?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            You are about to submit your allocation for{" "}
+            <strong>{month} {year}</strong>. This will be sent to{" "}
+            <strong>{currentUser?.managerName}</strong> for review.
+            Inputs will be locked until reviewed.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={confirmSubmit}>Confirm & Submit</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={successOpen} onOpenChange={setSuccessOpen}>
+        <DialogContent className="text-center">
+          <DialogHeader className="items-center space-y-3">
+            <CheckCircle className="h-16 w-16 text-green-500" />
+            <DialogTitle className="text-xl font-semibold">
+              Submitted for Review!
+            </DialogTitle>
+            <DialogDescription className="text-sm text-muted-foreground">
+              Tracking ID: <strong>{trackingId}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          {/* Status chip lives outside DialogDescription because it
+              contains a <Badge> (which renders as <div>) — invalid
+              inside a <p>, which DialogDescription is. */}
+          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            Status changed to
+            <Badge className="bg-amber-100 text-amber-800">Pending Review</Badge>
+          </div>
+          <DialogFooter className="sm:justify-center">
+            <Button onClick={() => setSuccessOpen(false)}>Done</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+function generateDraftId(year: string): string {
+  const suffix =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID().split("-")[0].toUpperCase()
+      : `${Date.now().toString(36).slice(-4)}${Math.floor(Math.random() * 36 ** 2).toString(36)}`.toUpperCase();
+  return `ALC-${year}-${suffix}`;
+}
+
+export default MonthlyAllocations;

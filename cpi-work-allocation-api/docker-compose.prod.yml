@@ -1,0 +1,42 @@
+# Production Postgres — single-box EC2 deployment.
+#
+# Differences from docker-compose.yml (dev):
+#   1. Port bound to 127.0.0.1:5433 only — never reachable from the internet,
+#      even if the EC2 security group is misconfigured.
+#   2. POSTGRES_PASSWORD is sourced from the host env (no hard-coded dev value).
+#      Set it in `.env-postgres` alongside this file, chmod 600.
+#   3. Stronger restart policy and explicit healthcheck so docker compose can
+#      tell whether the DB is actually accepting connections.
+#
+# Usage on the server:
+#   cd /opt/cpi/cpi-work-allocation-app/cpi-work-allocation-api
+#   cp .env-postgres.example .env-postgres
+#   nano .env-postgres           # set POSTGRES_PASSWORD
+#   chmod 600 .env-postgres
+#   docker compose -f docker-compose.prod.yml --env-file .env-postgres up -d
+#
+# The named volume `cpi_pgdata_prod` is separate from the dev volume on
+# purpose — no chance of accidentally pointing prod at dev data on a host
+# that happens to have both files.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cpi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cpi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env-postgres}
+      POSTGRES_DB: cpi_work_allocation
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - cpi_pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cpi -d cpi_work_allocation"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  cpi_pgdata_prod:

@@ -1,0 +1,130 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { Toaster as Sonner } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { EmployeesProvider } from "@/contexts/EmployeesContext";
+import { JournalProvider } from "@/contexts/JournalContext";
+import { AllocationsProvider } from "@/contexts/AllocationsContext";
+import { ClientsConfigProvider } from "@/contexts/ClientsConfigContext";
+import { AIConfigProvider } from "@/contexts/AIConfigContext";
+import { NotificationsProvider } from "@/contexts/NotificationsContext";
+import AuthenticatedLayout from "@/layouts/AuthenticatedLayout";
+import ProtectedRoute from "@/routes/ProtectedRoute";
+import PublicOnlyRoute from "@/routes/PublicOnlyRoute";
+import RoleHomeRedirect from "@/routes/RoleHomeRedirect";
+import { appRoutes } from "@/routes/routeConfig";
+import Login from "@/pages/Login";
+import SetupPassword from "@/pages/SetupPassword";
+import ResetPassword from "@/pages/ResetPassword";
+import NotFound from "@/pages/NotFound";
+
+const queryClient = new QueryClient();
+
+/**
+ * Top-level routing for CPI Work Allocation.
+ *
+ * Structure:
+ *   /login               -> PublicOnlyRoute  (authed users bounce home)
+ *   /, /dashboard, ...   -> ProtectedRoute   (auth required)
+ *                           + domain providers
+ *                           + AuthenticatedLayout shell
+ *                           -> per-route RBAC guard -> page
+ *   *                    -> NotFound (rendered inside the shell when
+ *                                     authed, bounced to /login when not)
+ *
+ * Provider nesting:
+ *   EmployeesProvider     (editable user directory — must wrap
+ *                          AuthProvider since login queries it)
+ *     AuthProvider        (session only, delegates directory queries)
+ *       BrowserRouter
+ *         ...
+ *
+ * Inside the authed shell:
+ *   ClientsConfigProvider  (taxonomy: teams, clients, categories, rules)
+ *     JournalProvider      (daily entries)
+ *       AllocationsProvider (monthly records + flags)
+ *         AuthenticatedLayout
+ *
+ * ClientsConfig is outermost inside the shell because Allocations and
+ * Workspace read from it but nothing in it reads from them.
+ */
+const App = () => (
+  <QueryClientProvider client={queryClient}>
+    <TooltipProvider>
+      <Sonner />
+      <EmployeesProvider>
+        <AuthProvider>
+          <BrowserRouter>
+            <Routes>
+              {/* Public */}
+              <Route
+                path="/login"
+                element={
+                  <PublicOnlyRoute>
+                    <Login />
+                  </PublicOnlyRoute>
+                }
+              />
+
+              {/*
+                Password-setup is fully public — no session check, since
+                the recipient of the welcome email hasn't logged in yet
+                and won't have a cookie. We intentionally do NOT wrap
+                this in PublicOnlyRoute: an admin who is already logged
+                in might still legitimately need to redeem a link they
+                forwarded to themselves during setup testing.
+              */}
+              <Route path="/setup-password" element={<SetupPassword />} />
+
+              {/*
+                Password-reset is fully public — the token arrives via email to
+                an unauthenticated user (they may or may not have a session when
+                they click the link). Same rationale as /setup-password above.
+              */}
+              <Route path="/reset-password" element={<ResetPassword />} />
+
+              {/* Authenticated shell: auth guard + providers + layout */}
+              <Route
+                element={
+                  <ProtectedRoute>
+                    <ClientsConfigProvider>
+                      <AIConfigProvider>
+                        <JournalProvider>
+                          <AllocationsProvider>
+                            <NotificationsProvider>
+                              <AuthenticatedLayout />
+                            </NotificationsProvider>
+                          </AllocationsProvider>
+                        </JournalProvider>
+                      </AIConfigProvider>
+                    </ClientsConfigProvider>
+                  </ProtectedRoute>
+                }
+              >
+                <Route index element={<RoleHomeRedirect />} />
+
+                {appRoutes.map(({ path, element: Page, roles }) => (
+                  <Route
+                    key={path}
+                    path={path}
+                    element={
+                      <ProtectedRoute roles={roles}>
+                        <Page />
+                      </ProtectedRoute>
+                    }
+                  />
+                ))}
+
+                {/* 404 inside the shell so the user keeps their sidebar */}
+                <Route path="*" element={<NotFound />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </AuthProvider>
+      </EmployeesProvider>
+    </TooltipProvider>
+  </QueryClientProvider>
+);
+
+export default App;
