@@ -56,13 +56,12 @@ export const CSV_TEMPLATE = [
   "Ben,Smith,ben.smith@example.com,Manager;Employee,Projects,Program Manager,,mgrpass",
 ].join("\n");
 
-// All roles that can be assigned via CSV. Admin/Head are included so
-// the importer matches the EmployeeManagement UI's full role list.
+// All roles that can be assigned via CSV. Admin is included so the
+// importer matches the EmployeeManagement UI's full role list.
 const VALID_ROLES: readonly UserRole[] = [
   "Employee",
   "Manager",
   "Finance",
-  "Head",
   "Admin",
 ];
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

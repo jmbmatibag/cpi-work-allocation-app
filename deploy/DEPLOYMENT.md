@@ -22,7 +22,7 @@ companion files in this `deploy/` directory are referenced throughout:
 
 ### EC2 instance
 
-- **Type**: `t3.medium` (2 vCPU, 4 GB RAM)
+- **Type**: `t3a.small` (2 vCPU, 2 GB RAM)
 - **AMI**: Ubuntu Server 22.04 LTS
 - **Storage**: 50 GiB gp3, encrypted
 - **Region**: `ap-southeast-1` (Singapore)
@@ -104,7 +104,7 @@ chmod 600 .env
 # Frontend build env
 cd ../cpi-work-allocation-frontend
 cp .env.production.example .env.production
-nano .env.production              # set VITE_API_BASE_URL to https://yourdomain/api
+nano .env.production              # set VITE_API_URL to https://yourdomain (origin only, no /api)
 ```
 
 ### 3.3 Start Postgres
@@ -133,23 +133,41 @@ cd cpi-work-allocation-shared && npm ci && npm run build
 # API
 cd ../cpi-work-allocation-api && npm ci && npm run build
 
-# Apply schema + create the master admin
+# 1) Apply the schema
 npx prisma migrate deploy
+
+# 2) Seed config tables (teams, clients, categories, work types, inference rules).
+#    Idempotent — safe to re-run. Does NOT touch users or transactional data.
+npx tsx scripts/seed-config.ts
+
+# 3) Create the master admin (jbmatibag@cpi.com.ph / admin123!).
+#    Wipes transactional + user data first; config tables are preserved.
 npx tsx scripts/reset-db.ts
 
 # Frontend
 cd ../cpi-work-allocation-frontend && npm ci && npm run build
 ```
 
+> Do **not** use `npm run db:seed` here. That command runs `prisma/seed.ts`
+> which seeds 11 demo employees alongside the config — fine for local dev,
+> wrong for production. The two scripts above give you config + one admin.
+
 ### 3.5 PM2
 
 ```bash
-cd /opt/cpi/cpi-work-allocation-app/cpi-work-allocation-api
-pm2 start dist/index.js --name cpi-api --time
+# Create the log directory before starting PM2 for the first time.
+sudo mkdir -p /var/log/cpi && sudo chown ubuntu:ubuntu /var/log/cpi
+
+cd /opt/cpi/cpi-work-allocation-app
+pm2 start deploy/ecosystem.config.js --env production
 pm2 logs cpi-api --lines 30        # expect "API listening on http://localhost:4000"
 pm2 save
 pm2 startup systemd                # copy + run the sudo command it prints
 ```
+
+> The ecosystem config runs **1 worker** with a 200 MB memory ceiling — correct
+> for a t3a.small where Postgres shares the same 2 GB RAM.  Upgrade to 2 workers
+> only after moving to a t3a.medium or larger.
 
 ### 3.6 Nginx + TLS
 
@@ -161,7 +179,7 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t && sudo systemctl reload nginx
 
 # Point your DNS A record at the Elastic IP, wait for propagation, then:
-sudo certbot --nginx -d app.yourdomain.com --redirect --agree-tos -m you@cpi.com.ph -n
+sudo certbot --nginx -d work-allocation.cpi.com.ph --redirect --agree-tos -m jbmatibag@cpi.com.ph -n
 ```
 
 ### 3.7 Nightly backup cron

@@ -11,15 +11,14 @@ import * as ctrl from '../controllers/employees.js';
 const router = Router();
 router.use(requireAuth);
 
-const adminOrHead = requireRole('Admin', 'Head');
 const adminOnly = requireRole('Admin');
 
 router.get('/', ctrl.list);
 router.get('/:id', validate(IdParamSchema, 'params'), ctrl.getOne);
-router.post('/', adminOrHead, validate(CreateEmployeeSchema), ctrl.create);
+router.post('/', adminOnly, validate(CreateEmployeeSchema), ctrl.create);
 router.put(
   '/:id',
-  adminOrHead,
+  adminOnly,
   validate(IdParamSchema, 'params'),
   validate(UpdateEmployeeSchema),
   ctrl.update

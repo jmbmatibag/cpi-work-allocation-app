@@ -7,6 +7,7 @@ import { sendOtpEmail, sendPasswordResetEmail, PASSWORD_RESET_TTL_MS } from '../
 import {
   LoginSchema,
   VerifyOtpSchema,
+  ResendOtpSchema,
   SetupPasswordSchema,
   ForgotPasswordSchema,
   ResetPasswordSchema,
@@ -32,6 +33,11 @@ const ACCESS_TTL_MS = 60 * 60 * 1000; // 1 hour
 const OTP_TTL_MS = 10 * 60 * 1000;
 const BCRYPT_ROUNDS = 12;
 const MAX_OTP_ATTEMPTS = 5;
+// Resend abuse controls. A user may request at most MAX_OTP_RESENDS fresh
+// codes before the resend endpoint locks them out for OTP_LOCKOUT_MS. Both
+// the counter and the lockout are cleared on a successful OTP verification.
+const MAX_OTP_RESENDS = 3;
+const OTP_LOCKOUT_MS = 60 * 60 * 1000; // 1 hour
 
 function accessCookieOptions() {
   return {
@@ -109,9 +115,17 @@ export async function login(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  // Wipe any prior live OTPs before issuing a fresh one — prevents an
-  // old code sitting in another inbox tab from being valid.
-  await prisma.otpCode.deleteMany({ where: { userId: user.id } });
+  await issueAndSendOtp(user.id, email);
+  res.json({ message: 'A one-time code has been sent to your email.' });
+}
+
+/**
+ * Issue a fresh login OTP for a user and email it. Wipes any prior live
+ * OTPs first so an old code sitting in another inbox tab can't be used.
+ * Shared by the login (step 1) and resend-otp flows.
+ */
+async function issueAndSendOtp(userId: string, email: string): Promise<void> {
+  await prisma.otpCode.deleteMany({ where: { userId } });
 
   // CSPRNG-backed and uniform — Math.random is neither.
   const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
@@ -119,11 +133,84 @@ export async function login(req: Request, res: Response): Promise<void> {
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
 
   await prisma.otpCode.create({
-    data: { userId: user.id, codeHash, expiresAt },
+    data: { userId, codeHash, expiresAt },
   });
 
   await sendOtpEmail(email, code);
-  res.json({ message: 'A one-time code has been sent to your email.' });
+}
+
+/**
+ * Re-issue a login OTP during an in-progress sign-in, with abuse controls.
+ *
+ * Logic (per the resend spec):
+ *   1. If the user is currently locked out (otpLockoutUntil in the future),
+ *      reject with 429 + the remaining lockout time.
+ *   2. If the resend count has reached the cap, stamp a 1-hour lockout and
+ *      reject with 429.
+ *   3. Otherwise increment the count, issue a fresh OTP, and email it.
+ *
+ * Anti-enumeration: unknown / not-yet-set-up accounts get the same generic
+ * 200 as a successful resend, with no email sent and no DB write — a probe
+ * cannot tell a real address from a fake one. (Genuine users reach this
+ * endpoint only after passing the password step, so this is belt-and-braces.)
+ */
+export async function resendOtp(req: Request, res: Response): Promise<void> {
+  const { email } = getValid(req, ResendOtpSchema);
+
+  const genericOk = () =>
+    res.json({ message: 'A one-time code has been sent to your email.' });
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user || !user.passwordHash) {
+    genericOk();
+    return;
+  }
+
+  const now = Date.now();
+
+  // 1. Currently locked out → 429 with remaining time.
+  if (user.otpLockoutUntil && user.otpLockoutUntil.getTime() > now) {
+    rejectLocked(res, user.otpLockoutUntil.getTime() - now);
+    return;
+  }
+
+  // A lockout that has since elapsed resets the window for a fresh budget.
+  let resendCount = user.otpResendCount;
+  if (user.otpLockoutUntil && user.otpLockoutUntil.getTime() <= now) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { otpResendCount: 0, otpLockoutUntil: null },
+    });
+    resendCount = 0;
+  }
+
+  // 2. Cap reached → start a 1-hour lockout and reject.
+  if (resendCount >= MAX_OTP_RESENDS) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { otpLockoutUntil: new Date(now + OTP_LOCKOUT_MS) },
+    });
+    rejectLocked(res, OTP_LOCKOUT_MS);
+    return;
+  }
+
+  // 3. Within budget → count it, issue a fresh code, send it.
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { otpResendCount: { increment: 1 } },
+  });
+  await issueAndSendOtp(user.id, email);
+  genericOk();
+}
+
+/** Emit a 429 with a Retry-After header and the remaining lockout time. */
+function rejectLocked(res: Response, remainingMs: number): void {
+  const retryAfterSeconds = Math.ceil(remainingMs / 1000);
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+  res.status(429).json({
+    error: 'Too many code requests. Please try again later.',
+    retryAfterSeconds,
+  });
 }
 
 /**
@@ -208,6 +295,15 @@ export async function verifyOtp(req: Request, res: Response): Promise<void> {
   }
 
   await prisma.otpCode.update({ where: { id: otp.id }, data: { used: true } });
+
+  // Successful login clears the resend abuse window so the next sign-in
+  // starts with a fresh budget.
+  if (user.otpResendCount !== 0 || user.otpLockoutUntil !== null) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { otpResendCount: 0, otpLockoutUntil: null },
+    });
+  }
 
   // Issue both cookies: short-lived access token (stateless JWT) and
   // long-lived refresh token (opaque, stored hashed in DB).

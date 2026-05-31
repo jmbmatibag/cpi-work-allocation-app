@@ -20,7 +20,7 @@ import SettingsPage from "@/pages/SettingsPage";
 import CompanyMasterOverview from "@/pages/CompanyMasterOverview";
 import EmployeeManagement from "@/pages/EmployeeManagement";
 
-export type AppRole = "Employee" | "Manager" | "Head" | "Finance" | "Admin";
+export type AppRole = "Employee" | "Manager" | "Finance" | "Admin";
 
 /**
  * Sidebar grouping. "workspace" = the user's own work; "management" =
@@ -45,7 +45,6 @@ export interface AppRoute {
 const WORKSPACE_ROLES: readonly AppRole[] = [
   "Employee",
   "Manager",
-  "Head",
   "Finance",
 ];
 
@@ -58,7 +57,7 @@ const WORKSPACE_ROLES: readonly AppRole[] = [
  */
 export const appRoutes: readonly AppRoute[] = [
   // -------------------------------------------------------------------
-  // Workspace — visible to Employee, Manager, Head, Finance.
+  // Workspace — visible to Employee, Manager, Finance.
   // Admin lives entirely in the Management section.
   // -------------------------------------------------------------------
   {
@@ -100,7 +99,7 @@ export const appRoutes: readonly AppRoute[] = [
   {
     path: "/team-hub",
     element: TeamHub,
-    roles: ["Manager", "Head"],
+    roles: ["Manager"],
     label: "Team Hub",
     icon: Users,
     group: "management",
@@ -142,7 +141,6 @@ export const appRoutes: readonly AppRoute[] = [
 export const roleHomePath: Record<AppRole, string> = {
   Employee: "/dashboard",
   Manager: "/dashboard",
-  Head: "/dashboard",
   Finance: "/dashboard",
   Admin: "/employees",
 };

@@ -5,8 +5,8 @@ export interface AuthRequest extends Request {
   userId?: string;
   /**
    * The user's roles, as carried in the JWT payload. Multi-role: a
-   * user can have any combination of Employee / Manager / Head /
-   * Finance / Admin. Permission checks (requireRole) use intersection
+   * user can have any combination of Employee / Manager / Finance /
+   * Admin. Permission checks (requireRole) use intersection
    * semantics — any matching role grants access.
    */
   userRoles?: string[];

@@ -15,7 +15,7 @@ vi.mock('../lib/mailer.js', () => ({ sendOtpEmail: vi.fn() }));
 
 const app = createApp();
 
-type RoleArr = ('Employee' | 'Manager' | 'Head' | 'Finance' | 'Admin')[];
+type RoleArr = ('Employee' | 'Manager' | 'Finance' | 'Admin')[];
 
 const EMP = {
   id: 'TEST_ALLOC_EMP', firstName: 'Alloc', lastName: 'Employee',

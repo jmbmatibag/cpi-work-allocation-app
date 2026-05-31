@@ -39,7 +39,7 @@ const TEST_USER = {
   lastName:  'User',
   email:     'test.auth@cpi.com.ph',
   password:  'test_pass_123',
-  roles:     ['Employee'] as ('Employee' | 'Manager' | 'Head' | 'Finance' | 'Admin')[],
+  roles:     ['Employee'] as ('Employee' | 'Manager' | 'Finance' | 'Admin')[],
   team:      'IT/Platforms',
   jobTitle:  'Tester',
 };
@@ -168,7 +168,7 @@ describe('POST /api/auth/setup-password', () => {
       firstName: 'Setup',
       lastName: 'User',
       email: 'test.setup@cpi.com.ph',
-      roles: ['Employee'] as ('Employee' | 'Manager' | 'Head' | 'Finance' | 'Admin')[],
+      roles: ['Employee'] as ('Employee' | 'Manager' | 'Finance' | 'Admin')[],
       team: 'IT/Platforms',
       jobTitle: 'Tester',
       managerId: null,

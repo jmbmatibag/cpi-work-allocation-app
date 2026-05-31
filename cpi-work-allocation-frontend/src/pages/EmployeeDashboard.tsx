@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, memo } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Card,
@@ -130,6 +130,166 @@ function recordToCategoryRow(
   return row;
 }
 
+// ── Allocation Trend Chart ────────────────────────────────────────────────────
+// Isolated as a React.memo component so it only re-renders when chart data
+// actually changes — not on every unrelated state update in the parent
+// (e.g. journal context refreshes, KPI card changes).
+
+interface TrendChartProps {
+  trendData: Array<Record<string, number | string>>;
+  allCategories: string[];
+  drillDown: boolean;
+  onToggle: () => void;
+}
+
+const AllocationTrendChart = memo(function AllocationTrendChart({
+  trendData,
+  allCategories,
+  drillDown,
+  onToggle,
+}: TrendChartProps) {
+  return (
+    <Card className="col-span-2">
+      <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
+        <CardTitle className="text-base">
+          Allocation Trend — Last {TREND_WINDOW_MONTHS} Months
+        </CardTitle>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={drillDown}
+          onClick={onToggle}
+          className="flex items-center gap-2 text-xs"
+          style={{ color: "hsl(220 10% 45%)" }}
+        >
+          <span>Split by sub category</span>
+          <span
+            className="relative inline-flex h-4 w-7 rounded-full transition-colors"
+            style={{
+              background: drillDown ? "hsl(224 72% 45%)" : "hsl(220 13% 85%)",
+            }}
+          >
+            <span
+              className="inline-block h-3 w-3 rounded-full bg-white transition-transform"
+              style={{
+                transform: drillDown ? "translateX(14px)" : "translateX(2px)",
+                marginTop: "2px",
+                boxShadow: "0 1px 2px 0 hsl(220 13% 70% / 0.5)",
+              }}
+            />
+          </span>
+        </button>
+      </CardHeader>
+      <CardContent>
+        {trendData.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+            <p className="text-sm font-medium">No approved history yet</p>
+            <p className="text-xs mt-1 text-center max-w-xs">
+              Once your manager approves a submission, your allocation trend
+              will appear here.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Compact inline legend */}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-4">
+              {allCategories.map((cat, i) => (
+                <div key={cat} className="flex items-center gap-1.5">
+                  <span
+                    className="w-2.5 h-2.5 rounded-[3px] shrink-0"
+                    style={{
+                      background: CHART_COLORS[i % CHART_COLORS.length],
+                    }}
+                  />
+                  <span className="text-xs text-muted-foreground">{cat}</span>
+                </div>
+              ))}
+            </div>
+
+            <ResponsiveContainer width="100%" height={280}>
+              <AreaChart
+                data={trendData}
+                margin={{ top: 8, right: 16, left: -12, bottom: 0 }}
+              >
+                <defs>
+                  {allCategories.map((cat, i) => (
+                    <linearGradient
+                      key={cat}
+                      id={`grad-${i}`}
+                      x1="0"
+                      y1="0"
+                      x2="0"
+                      y2="1"
+                    >
+                      <stop
+                        offset="0%"
+                        stopColor={CHART_COLORS[i % CHART_COLORS.length]}
+                        stopOpacity={0.32}
+                      />
+                      <stop
+                        offset="100%"
+                        stopColor={CHART_COLORS[i % CHART_COLORS.length]}
+                        stopOpacity={0.02}
+                      />
+                    </linearGradient>
+                  ))}
+                </defs>
+
+                <CartesianGrid
+                  strokeDasharray="2 6"
+                  stroke="hsl(var(--border))"
+                  strokeOpacity={0.5}
+                  vertical={false}
+                />
+
+                <XAxis
+                  dataKey="month"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                  dy={6}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  ticks={[0, 25, 50, 75, 100]}
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
+                  tickFormatter={(v) => `${v}%`}
+                  width={40}
+                />
+                <Tooltip
+                  content={<RoundedTooltip />}
+                  cursor={{
+                    stroke: "hsl(var(--primary))",
+                    strokeOpacity: 0.2,
+                    strokeWidth: 1,
+                    strokeDasharray: "3 4",
+                  }}
+                />
+
+                {allCategories.map((cat, i) => (
+                  <Area
+                    key={cat}
+                    type="monotone"
+                    dataKey={cat}
+                    stackId="1"
+                    stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                    strokeWidth={1.75}
+                    fill={`url(#grad-${i})`}
+                    isAnimationActive={true}
+                    animationDuration={600}
+                  />
+                ))}
+              </AreaChart>
+            </ResponsiveContainer>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+});
+
 const EmployeeDashboard = () => {
   const { currentUser } = useAuth();
   const { getEntriesForMonth } = useJournal();
@@ -186,6 +346,9 @@ const EmployeeDashboard = () => {
   // and Projects — Quick Policy (and any other sub cat configured). Off by
   // default — the main-category view is the most readable at a glance.
   const [drillDown, setDrillDown] = useState(false);
+  // Stable reference — AllocationTrendChart is React.memo'd so a new function
+  // identity on every render would defeat the memoization.
+  const handleDrillDownToggle = useCallback(() => setDrillDown((v) => !v), []);
 
   // Last TREND_WINDOW_MONTHS approved records, reshaped into
   // category-keyed rows. Only approved records feed the chart —
@@ -406,144 +569,12 @@ const EmployeeDashboard = () => {
 
       {/* Charts + AI Insights */}
       <div className="grid grid-cols-3 gap-4">
-        <Card className="col-span-2">
-          <CardHeader className="pb-2 flex-row items-center justify-between space-y-0">
-            <CardTitle className="text-base">
-              Allocation Trend — Last {TREND_WINDOW_MONTHS} Months
-            </CardTitle>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={drillDown}
-              onClick={() => setDrillDown((v) => !v)}
-              className="flex items-center gap-2 text-xs"
-              style={{ color: "hsl(220 10% 45%)" }}
-            >
-              <span>Split by sub category</span>
-              <span
-                className="relative inline-flex h-4 w-7 rounded-full transition-colors"
-                style={{
-                  background: drillDown ? "hsl(224 72% 45%)" : "hsl(220 13% 85%)",
-                }}
-              >
-                <span
-                  className="inline-block h-3 w-3 rounded-full bg-white transition-transform"
-                  style={{
-                    transform: drillDown ? "translateX(14px)" : "translateX(2px)",
-                    marginTop: "2px",
-                    boxShadow: "0 1px 2px 0 hsl(220 13% 70% / 0.5)",
-                  }}
-                />
-              </span>
-            </button>
-          </CardHeader>
-          <CardContent>
-            {trendData.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <p className="text-sm font-medium">No approved history yet</p>
-                <p className="text-xs mt-1 text-center max-w-xs">
-                  Once your manager approves a submission, your allocation trend
-                  will appear here.
-                </p>
-              </div>
-            ) : (
-              <>
-                {/* Compact inline legend */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mb-4">
-                  {allCategories.map((cat, i) => (
-                    <div key={cat} className="flex items-center gap-1.5">
-                      <span
-                        className="w-2.5 h-2.5 rounded-[3px] shrink-0"
-                        style={{
-                          background: CHART_COLORS[i % CHART_COLORS.length],
-                        }}
-                      />
-                      <span className="text-xs text-muted-foreground">{cat}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <ResponsiveContainer width="100%" height={280}>
-                  <AreaChart
-                    data={trendData}
-                    margin={{ top: 8, right: 16, left: -12, bottom: 0 }}
-                  >
-                    <defs>
-                      {allCategories.map((cat, i) => (
-                        <linearGradient
-                          key={cat}
-                          id={`grad-${i}`}
-                          x1="0"
-                          y1="0"
-                          x2="0"
-                          y2="1"
-                        >
-                          <stop
-                            offset="0%"
-                            stopColor={CHART_COLORS[i % CHART_COLORS.length]}
-                            stopOpacity={0.32}
-                          />
-                          <stop
-                            offset="100%"
-                            stopColor={CHART_COLORS[i % CHART_COLORS.length]}
-                            stopOpacity={0.02}
-                          />
-                        </linearGradient>
-                      ))}
-                    </defs>
-
-                    <CartesianGrid
-                      strokeDasharray="2 6"
-                      stroke="hsl(var(--border))"
-                      strokeOpacity={0.5}
-                      vertical={false}
-                    />
-
-                    <XAxis
-                      dataKey="month"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-                      dy={6}
-                    />
-                    <YAxis
-                      domain={[0, 100]}
-                      ticks={[0, 25, 50, 75, 100]}
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }}
-                      tickFormatter={(v) => `${v}%`}
-                      width={40}
-                    />
-                    <Tooltip
-                      content={<RoundedTooltip />}
-                      cursor={{
-                        stroke: "hsl(var(--primary))",
-                        strokeOpacity: 0.2,
-                        strokeWidth: 1,
-                        strokeDasharray: "3 4",
-                      }}
-                    />
-
-                    {allCategories.map((cat, i) => (
-                      <Area
-                        key={cat}
-                        type="monotone"
-                        dataKey={cat}
-                        stackId="1"
-                        stroke={CHART_COLORS[i % CHART_COLORS.length]}
-                        strokeWidth={1.75}
-                        fill={`url(#grad-${i})`}
-                        isAnimationActive={true}
-                        animationDuration={600}
-                      />
-                    ))}
-                  </AreaChart>
-                </ResponsiveContainer>
-              </>
-            )}
-          </CardContent>
-        </Card>
+        <AllocationTrendChart
+          trendData={trendData}
+          allCategories={allCategories}
+          drillDown={drillDown}
+          onToggle={handleDrillDownToggle}
+        />
 
         {/* AI Performance Insights */}
         <Card className="bg-gradient-to-br from-primary/5 via-card to-accent/5 border-primary/20">

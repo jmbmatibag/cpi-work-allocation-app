@@ -17,8 +17,19 @@ const port = Number(process.env.PORT) || 4000;
 
 app.listen(port, async () => {
   console.log(`API listening on http://localhost:${port}`);
-  startCleanupScheduler();
-  startReminderScheduler();
+
+  // In PM2 cluster mode each worker receives a NODE_APP_INSTANCE env var
+  // ('0', '1', …). Run schedulers only in the primary worker (instance 0)
+  // to prevent duplicate emails and overlapping cleanup jobs when multiple
+  // workers share the same database. In fork mode (or plain `node`) the
+  // variable is absent, which also passes the check.
+  const isPrimary =
+    process.env.NODE_APP_INSTANCE === undefined ||
+    process.env.NODE_APP_INSTANCE === '0';
+  if (isPrimary) {
+    startCleanupScheduler();
+    startReminderScheduler();
+  }
 
   const smtp = await verifySmtp();
   if (smtp.ok) {

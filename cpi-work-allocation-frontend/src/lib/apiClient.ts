@@ -241,6 +241,11 @@ const auth = {
   verifyOtp: (email: string, code: string) =>
     post<{ user: ApiUser }>('/api/auth/verify-otp', { email, code }),
 
+  // Re-issues a fresh login OTP during an in-progress sign-in. Rejects with
+  // 429 (ApiError) once the per-user resend cap / hourly lockout is hit.
+  resendOtp: (email: string) =>
+    post<{ message: string }>('/api/auth/resend-otp', { email }),
+
   // One-time redemption of the welcome-email setup link.
   setupPassword: (token: string, password: string) =>
     post<{ message: string }>('/api/auth/setup-password', { token, password }),

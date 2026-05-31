@@ -8,7 +8,7 @@
  * Scope precedence (broadest wins for grants, narrowest applies for
  * filters):
  *
- *   GLOBAL  — Admin / Head / Finance can see everyone.
+ *   GLOBAL  — Admin / Finance can see everyone.
  *   TEAM    — Manager can see direct reports.
  *   SELF    — Employee can see their own records.
  *
@@ -19,7 +19,7 @@
 
 import { prisma } from './prisma.js';
 
-const GLOBAL_ROLES = ['Admin', 'Head', 'Finance'];
+const GLOBAL_ROLES = ['Admin', 'Finance'];
 
 export function hasGlobalScope(roles: readonly string[] | undefined): boolean {
   if (!roles) return false;

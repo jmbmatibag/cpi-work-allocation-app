@@ -38,6 +38,15 @@ export const VerifyOtpSchema = z.object({
     code: z.string().length(6).regex(/^\d{6}$/, 'Code must be 6 digits'),
 });
 /**
+ * Body of POST /api/auth/resend-otp — re-issues a fresh login OTP during
+ * an in-progress sign-in. Only the email is needed; the endpoint is
+ * rate-limited server-side (per-user resend cap + hourly lockout) to
+ * prevent it being used to spam an inbox.
+ */
+export const ResendOtpSchema = z.object({
+    email: z.string().email(),
+});
+/**
  * Body of POST /api/auth/setup-password — redeems the one-time link
  * that an admin-created user receives in their welcome email. Token
  * format is whatever the server emits; we just require non-empty here

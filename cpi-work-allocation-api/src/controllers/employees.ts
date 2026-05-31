@@ -19,7 +19,6 @@ const PREFIX_BY_ROLE: Record<UserRole, string> = {
   Employee: 'EMP',
   Manager:  'MGR',
   Finance:  'FIN',
-  Head:     'HEAD',
   Admin:    'ADM',
 };
 

@@ -106,7 +106,7 @@ interface EmployeesContextType {
 
   /**
    * Create a new employee. Generates an id based on the primary role
-   * in the array (ADM > HEAD > FIN > MGR > EMP). Refuses if the
+   * in the array (ADM > FIN > MGR > EMP). Refuses if the
    * email is already in use.
    *
    * Returns a Promise so the API-mode provider can wait for the
@@ -242,7 +242,6 @@ const nextId = (prefix: string, existing: readonly Employee[]): string => {
 const prefixForRole = (role: UserRole): string => {
   if (role === "Manager") return "MGR";
   if (role === "Finance") return "FIN";
-  if (role === "Head") return "HEAD";
   if (role === "Admin") return "ADM";
   return "EMP";
 };

@@ -11,11 +11,45 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
   },
-  plugins: [react(),].filter(Boolean),
+  plugins: [react()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
     dedupe: ["react", "react-dom", "react/jsx-runtime", "react/jsx-dev-runtime", "@tanstack/react-query", "@tanstack/query-core"],
+  },
+  build: {
+    // Split vendor packages into separate long-lived chunks. Nginx serves
+    // /assets/ with a 1-year immutable cache header, so chunked vendors are
+    // fetched once and cached indefinitely — only app code chunks bust on deploy.
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          // Core React runtime — tiny, changes rarely, gets its own chunk.
+          if (
+            id.includes('/react/') ||
+            id.includes('/react-dom/') ||
+            id.includes('/react-router')
+          ) return 'vendor-react';
+          // TanStack Query — data fetching layer, changes independently.
+          if (id.includes('/@tanstack/')) return 'vendor-query';
+          // Recharts + d3 sub-packages (~300 kB) — chart-only chunk so the
+          // main app bundle doesn't grow if charts are not on the current route.
+          if (id.includes('/recharts/') || id.includes('/d3-')) return 'vendor-charts';
+          // Radix primitives + shadcn component glue.
+          if (id.includes('/@radix-ui/')) return 'vendor-ui';
+          // Form validation stack.
+          if (id.includes('/react-hook-form/') || id.includes('/zod/')) return 'vendor-forms';
+          // Excel export (exceljs + jszip) — heavy and rarely changing.
+          if (id.includes('/exceljs/') || id.includes('/jszip/')) return 'vendor-excel';
+          // Date utilities.
+          if (id.includes('/date-fns/') || id.includes('/react-day-picker/')) return 'vendor-date';
+          // Icon set — lucide ships many SVG components; isolate it.
+          if (id.includes('/lucide-react/')) return 'vendor-icons';
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
   },
 }));

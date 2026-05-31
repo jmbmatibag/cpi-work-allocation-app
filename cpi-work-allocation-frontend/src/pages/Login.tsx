@@ -1,12 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import FormError from "@/components/FormError";
 import { toast } from "sonner";
 import { Lock, Mail, ShieldCheck, ArrowLeft, Eye, EyeOff, KeyRound } from "lucide-react";
 import { sendMockOtp, verifyOtp as verifyMockOtp } from "@/lib/mockEmailService";
 import { api, ApiError } from "@/lib/apiClient";
+
+// Seconds the user must wait between OTP resend requests.
+const RESEND_COOLDOWN_SECONDS = 60;
 
 // ── Two-step sign-in. One component for all modes ─────────────────────────────
 //
@@ -34,6 +38,33 @@ const Login = () => {
   const [forgotEmail, setForgotEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // ── Resend-OTP cooldown + state ───────────────────────────────────────────
+  const [timeLeft, setTimeLeft] = useState(RESEND_COOLDOWN_SECONDS);
+  const [isResending, setIsResending] = useState(false);
+  const [resendError, setResendError] = useState("");
+
+  // Countdown ticker. Runs only on the OTP step and only while time
+  // remains. Depending on [step, timeLeft] re-arms the interval each second;
+  // the cleanup clears the previous one, so there's never more than one live
+  // interval and none survives unmount or a step change (no memory leak, no
+  // runaway loop). When a resend resets timeLeft back to 60, this re-fires
+  // and the countdown restarts.
+  useEffect(() => {
+    if (step !== "otp" || timeLeft <= 0) return;
+    const intervalId = setInterval(() => {
+      setTimeLeft((t) => Math.max(0, t - 1));
+    }, 1000);
+    return () => clearInterval(intervalId);
+  }, [step, timeLeft]);
+
+  // Enter the OTP step with a fresh cooldown and cleared resend state.
+  const goToOtpStep = () => {
+    setTimeLeft(RESEND_COOLDOWN_SECONDS);
+    setResendError("");
+    setOtpError("");
+    setStep("otp");
+  };
+
   // ── Step 1: Credentials ───────────────────────────────────────────────────
 
   const handleCredentialsSubmit = async () => {
@@ -47,7 +78,7 @@ const Login = () => {
       setCredError(null);
       try {
         await loginWithPassword(email, password);
-        setStep("otp");
+        goToOtpStep();
         toast.info("OTP sent", {
           description: "Check your email inbox for your one-time password.",
         });
@@ -68,7 +99,7 @@ const Login = () => {
         return;
       }
       sendMockOtp(email);
-      setStep("otp");
+      goToOtpStep();
       toast.info("OTP sent", {
         description: "Check the browser console for your mock OTP.",
       });
@@ -111,6 +142,42 @@ const Login = () => {
     }
   };
 
+  // ── Resend OTP ────────────────────────────────────────────────────────────
+
+  const handleResend = async () => {
+    // Guard: ignore clicks while the cooldown is still running or a resend
+    // is already in flight (the button is also disabled in both cases).
+    if (timeLeft > 0 || isResending) return;
+
+    setIsResending(true);
+    setResendError("");
+    setOtpError("");
+
+    try {
+      if (isApiMode) {
+        await api.auth.resendOtp(email);
+      } else {
+        sendMockOtp(email);
+      }
+      setOtp("");
+      setTimeLeft(RESEND_COOLDOWN_SECONDS); // restart the cooldown
+      toast.info("Code resent", {
+        description: "We've sent a new one-time code to your email.",
+      });
+    } catch (err) {
+      // 429 (rate-limit / lockout) and any other failure surface as a
+      // minimalist inline message — the OTP window stays open.
+      const msg =
+        err instanceof ApiError
+          ? (err.body as { error?: string })?.error ??
+            "Too many attempts. Please try again later."
+          : "Couldn't resend the code. Please try again.";
+      setResendError(msg);
+    } finally {
+      setIsResending(false);
+    }
+  };
+
   // ── Forgot password (API mode only) ──────────────────────────────────────
 
   const handleForgotSubmit = async () => {
@@ -135,6 +202,7 @@ const Login = () => {
     setStep("credentials");
     setOtp("");
     setOtpError("");
+    setResendError("");
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -171,9 +239,7 @@ const Login = () => {
           {/* ── Step: credentials ── */}
           {step === "credentials" && (
             <>
-              {credError && (
-                <p className="text-sm text-destructive font-medium">{credError}</p>
-              )}
+              <FormError message={credError} />
 
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Email</Label>
@@ -245,6 +311,8 @@ const Login = () => {
           {/* ── Step: OTP ── */}
           {step === "otp" && (
             <>
+              <FormError message={otpError} />
+
               <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
                 <ShieldCheck className="h-5 w-5 text-primary shrink-0 mt-0.5" />
                 <p className="text-sm text-muted-foreground">
@@ -274,9 +342,6 @@ const Login = () => {
                   maxLength={6}
                   className="text-center tracking-widest text-lg"
                 />
-                {otpError && (
-                  <p className="text-sm text-destructive">{otpError}</p>
-                )}
               </div>
 
               <Button
@@ -286,6 +351,25 @@ const Login = () => {
               >
                 {isSubmitting ? "Verifying…" : "Verify & Sign In"}
               </Button>
+
+              {/* Resend code — disabled until the cooldown elapses */}
+              <div className="text-center space-y-1">
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  disabled={timeLeft > 0 || isResending}
+                  className="text-sm font-medium text-primary hover:text-primary/80 transition-colors disabled:text-muted-foreground disabled:cursor-not-allowed disabled:hover:text-muted-foreground"
+                >
+                  {isResending
+                    ? "Sending…"
+                    : timeLeft > 0
+                      ? `Resend code in 0:${String(timeLeft).padStart(2, "0")}`
+                      : "Resend Code"}
+                </button>
+                {resendError && (
+                  <p className="text-xs text-destructive">{resendError}</p>
+                )}
+              </div>
 
               <button
                 onClick={handleBack}

@@ -2,7 +2,6 @@ import { z } from 'zod';
 export declare const UserRoleSchema: z.ZodEnum<{
     Employee: "Employee";
     Manager: "Manager";
-    Head: "Head";
     Finance: "Finance";
     Admin: "Admin";
 }>;
@@ -19,10 +18,9 @@ export declare const UserRoleSchema: z.ZodEnum<{
 export declare const UserRolesSchema: z.ZodPipe<z.ZodArray<z.ZodEnum<{
     Employee: "Employee";
     Manager: "Manager";
-    Head: "Head";
     Finance: "Finance";
     Admin: "Admin";
-}>>, z.ZodTransform<("Employee" | "Manager" | "Head" | "Finance" | "Admin")[], ("Employee" | "Manager" | "Head" | "Finance" | "Admin")[]>>;
+}>>, z.ZodTransform<("Employee" | "Manager" | "Finance" | "Admin")[], ("Employee" | "Manager" | "Finance" | "Admin")[]>>;
 export declare const CreateEmployeeSchema: z.ZodObject<{
     id: z.ZodOptional<z.ZodString>;
     firstName: z.ZodString;
@@ -32,10 +30,9 @@ export declare const CreateEmployeeSchema: z.ZodObject<{
     roles: z.ZodPipe<z.ZodArray<z.ZodEnum<{
         Employee: "Employee";
         Manager: "Manager";
-        Head: "Head";
         Finance: "Finance";
         Admin: "Admin";
-    }>>, z.ZodTransform<("Employee" | "Manager" | "Head" | "Finance" | "Admin")[], ("Employee" | "Manager" | "Head" | "Finance" | "Admin")[]>>;
+    }>>, z.ZodTransform<("Employee" | "Manager" | "Finance" | "Admin")[], ("Employee" | "Manager" | "Finance" | "Admin")[]>>;
     team: z.ZodString;
     managerId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     jobTitle: z.ZodString;
@@ -48,10 +45,9 @@ export declare const UpdateEmployeeSchema: z.ZodObject<{
     roles: z.ZodOptional<z.ZodPipe<z.ZodArray<z.ZodEnum<{
         Employee: "Employee";
         Manager: "Manager";
-        Head: "Head";
         Finance: "Finance";
         Admin: "Admin";
-    }>>, z.ZodTransform<("Employee" | "Manager" | "Head" | "Finance" | "Admin")[], ("Employee" | "Manager" | "Head" | "Finance" | "Admin")[]>>>;
+    }>>, z.ZodTransform<("Employee" | "Manager" | "Finance" | "Admin")[], ("Employee" | "Manager" | "Finance" | "Admin")[]>>>;
     team: z.ZodOptional<z.ZodString>;
     managerId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     jobTitle: z.ZodOptional<z.ZodString>;

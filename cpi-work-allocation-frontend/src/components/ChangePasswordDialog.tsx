@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import FormError from "@/components/FormError";
 import { api, ApiError } from "@/lib/apiClient";
 import PasswordStrengthMeter, { evaluateStrength } from "@/components/PasswordStrengthMeter";
 
@@ -81,10 +82,10 @@ const ChangePasswordDialog = ({ open, onOpenChange }: ChangePasswordDialogProps)
         </DialogHeader>
 
         <form onSubmit={handleSubmit} noValidate className="space-y-5 py-2">
+          {/* Form-level error — sits at the top, above the first input */}
+          <FormError message={serverError} />
+
           {/* Current password */}
-          {serverError && (
-            <p className="text-sm text-destructive font-medium">{serverError}</p>
-          )}
           <div className="space-y-2">
             <Label className="text-sm font-medium">Current Password</Label>
             <div className="relative">

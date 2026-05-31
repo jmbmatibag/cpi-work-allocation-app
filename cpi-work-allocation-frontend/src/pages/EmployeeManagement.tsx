@@ -80,7 +80,6 @@ const ROLE_OPTIONS: readonly UserRole[] = [
   "Employee",
   "Manager",
   "Finance",
-  "Head",
   "Admin",
 ];
 
@@ -97,7 +96,6 @@ const DIRECTORY_PAGE_SIZE = 10;
 const roleBadgeClass = (role: UserRole): string => {
   switch (role) {
     case "Admin":    return "bg-amber-100 text-amber-900 border-amber-300";
-    case "Head":     return "bg-rose-100 text-rose-900 border-rose-300";
     case "Manager":  return "bg-primary/10 text-primary border-primary/30";
     case "Finance":  return "bg-purple-100 text-purple-800 border-purple-200";
     case "Employee": return "bg-muted text-muted-foreground";

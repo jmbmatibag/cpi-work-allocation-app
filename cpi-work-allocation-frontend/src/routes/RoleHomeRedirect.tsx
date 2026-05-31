@@ -6,7 +6,7 @@ import { roleHomePath } from "./routeConfig";
 /**
  * Resolves "/" to the correct landing page for the current user's
  * primary role (highest-privilege role wins for multi-role users):
- *   - Admin / Head            -> /employees (Admin) or /dashboard (Head)
+ *   - Admin                   -> /employees
  *   - Manager / Employee      -> /dashboard
  *   - Finance                 -> /dashboard
  *

@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import {
   LoginSchema,
   VerifyOtpSchema,
+  ResendOtpSchema,
   SetupPasswordSchema,
   ForgotPasswordSchema,
   ResetPasswordSchema,
@@ -32,6 +33,18 @@ const verifyOtpLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many verification attempts.' },
+});
+
+// Resend-OTP triggers an SMTP send on every successful call. The
+// per-user resend cap + hourly lockout (in the controller) is the real
+// abuse control; this IP limiter is a coarse backstop against a single
+// host fanning resends across many email addresses.
+const resendOtpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many code requests. Try again in 15 minutes.' },
 });
 
 // Setup-password tokens are 256 bits of entropy, so a brute-force on
@@ -90,6 +103,7 @@ const changePasswordLimiter = rateLimit({
 
 router.post('/login',            loginLimiter,           validate(LoginSchema),          ctrl.login);
 router.post('/verify-otp',       verifyOtpLimiter,       validate(VerifyOtpSchema),      ctrl.verifyOtp);
+router.post('/resend-otp',       resendOtpLimiter,       validate(ResendOtpSchema),      ctrl.resendOtp);
 router.post('/setup-password',   setupPasswordLimiter,   validate(SetupPasswordSchema),  ctrl.setupPassword);
 router.post('/forgot-password',  forgotPasswordLimiter,  validate(ForgotPasswordSchema), ctrl.forgotPassword);
 router.post('/reset-password',   resetPasswordLimiter,   validate(ResetPasswordSchema),  ctrl.resetPassword);

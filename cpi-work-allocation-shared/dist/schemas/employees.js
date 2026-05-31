@@ -2,7 +2,6 @@ import { z } from 'zod';
 export const UserRoleSchema = z.enum([
     'Employee',
     'Manager',
-    'Head',
     'Finance',
     'Admin',
 ]);
@@ -60,14 +59,12 @@ export const UpdateEmployeeSchema = z.object({
  *
  * The ordering reflects reach, not seniority:
  *   - Admin manages the whole directory
- *   - Head sees department-level rollups
  *   - Finance sees cross-company financials
  *   - Manager sees their direct reports
  *   - Employee sees only their own work
  */
 const ROLE_PRIVILEGE_ORDER = [
     'Admin',
-    'Head',
     'Finance',
     'Manager',
     'Employee',

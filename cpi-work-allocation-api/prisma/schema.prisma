@@ -13,7 +13,6 @@ datasource db {
 enum UserRole {
   Employee
   Manager
-  Head
   Finance
   Admin
 }
@@ -29,9 +28,10 @@ enum AllocationStatus {
 
 model User {
   // Human-readable prefixed ids preserved from localStorage: EMP001, MGR001,
-  // FIN001, HEAD001, ADM001. New records get the same prefix logic — the
-  // prefix is derived from the user's highest-privilege role (see
-  // primaryRole() in cpi-work-allocation-shared).
+  // FIN001, ADM001. (Legacy HEAD### ids from the retired "Head" role may
+  // still exist as data; they are valid ids, just no longer minted.) New
+  // records get the same prefix logic — the prefix is derived from the
+  // user's highest-privilege role (see primaryRole() in cpi-work-allocation-shared).
   id           String   @id
   firstName    String
   lastName     String
@@ -59,6 +59,14 @@ model User {
   // setup token because the user already has an account and is actively
   // resetting; a shorter window limits exposure from a leaked token.
   passwordResetExpiresAt DateTime?
+  // OTP-resend abuse tracking (POST /api/auth/resend-otp). otpResendCount
+  // counts resends issued in the current window; when it reaches the cap
+  // (MAX_OTP_RESENDS) the endpoint stamps otpLockoutUntil 1 hour out and
+  // refuses further resends with 429 until then. Both are reset on a
+  // successful OTP verification (full login). Distinct from OtpCode.attempts,
+  // which tracks failed *verify* guesses against a single live code.
+  otpResendCount  Int       @default(0)
+  otpLockoutUntil DateTime?
   // Multi-role: a user can wear multiple hats simultaneously (e.g. an IT
   // Director who is also an Admin, or a Department Head who is also a
   // Manager and an Employee). Permissions are the UNION of the listed
@@ -128,6 +136,10 @@ model AllocationRecord {
   @@index([managerId])
   @@index([status])
   @@index([year, monthIndex])
+  // Composite: employee/manager scoped list() queries ordered by period.
+  @@index([employeeId, year, monthIndex])
+  // Composite: admin/finance queries filtering by status with period ordering.
+  @@index([status, year, monthIndex])
 }
 
 model AllocationActivity {

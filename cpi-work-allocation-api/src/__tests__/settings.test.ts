@@ -18,7 +18,7 @@ const TEST_ADMIN = {
   firstName: 'Settings',
   lastName:  'Admin',
   email:     'settings.admin@cpi.com.ph',
-  roles:     ['Admin'] as ('Employee' | 'Manager' | 'Head' | 'Finance' | 'Admin')[],
+  roles:     ['Admin'] as ('Employee' | 'Manager' | 'Finance' | 'Admin')[],
   team:      'IT/Platforms',
   jobTitle:  'Tester',
 };

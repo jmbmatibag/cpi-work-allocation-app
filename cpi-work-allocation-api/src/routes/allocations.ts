@@ -16,7 +16,7 @@ import * as ctrl from '../controllers/allocations.js';
 const router = Router();
 router.use(requireAuth);
 
-const managerOrAbove = requireRole('Manager', 'Head', 'Finance', 'Admin');
+const managerOrAbove = requireRole('Manager', 'Finance', 'Admin');
 
 router.post('/', validate(UpsertDraftSchema), ctrl.upsertDraft);
 router.get('/', validate(ListAllocationsQuerySchema, 'query'), ctrl.list);
