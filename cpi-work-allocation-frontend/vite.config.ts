@@ -34,9 +34,11 @@ export default defineConfig(({ mode }) => ({
           ) return 'vendor-react';
           // TanStack Query — data fetching layer, changes independently.
           if (id.includes('/@tanstack/')) return 'vendor-query';
-          // Recharts + d3 sub-packages (~300 kB) — chart-only chunk so the
-          // main app bundle doesn't grow if charts are not on the current route.
-          if (id.includes('/recharts/') || id.includes('/d3-')) return 'vendor-charts';
+          // Recharts + d3 are intentionally NOT assigned a manual chunk.
+          // Splitting them from vendor-react causes a cross-chunk
+          // React.forwardRef initialization error at runtime.
+          // Rollup will co-locate them with the main entry chunk where
+          // React is always already initialized.
           // Radix primitives + shadcn component glue.
           if (id.includes('/@radix-ui/')) return 'vendor-ui';
           // Form validation stack.
