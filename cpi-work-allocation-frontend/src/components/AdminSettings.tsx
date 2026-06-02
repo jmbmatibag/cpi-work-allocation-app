@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Plus,
   Trash2,
@@ -25,6 +25,8 @@ import {
   Loader2,
   ShieldAlert,
   Mail,
+  Upload,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,7 +63,12 @@ import { useAIConfig } from "@/contexts/AIConfigContext";
 import { testApiKey } from "@/lib/aiParser";
 import InferenceRulesEditor from "@/components/InferenceRulesEditor";
 import EmailSettingsConfig from "@/components/EmailSettingsConfig";
+import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { toast } from "sonner";
+import Papa from "papaparse";
+import { useAuth } from "@/contexts/AuthContext";
+import { useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/apiClient";
 
 /** Feature flag — Inference Rules tab hidden in production. */
 const SHOW_INFERENCE_RULES_TAB = true;
@@ -107,6 +114,8 @@ const AdminSettings = () => {
   const employees = useEmployees();
   const allocations = useAllocations();
   const journal = useJournal();
+  const { isApiMode } = useAuth();
+  const qc = useQueryClient();
 
   const {
     teams,
@@ -176,6 +185,8 @@ const AdminSettings = () => {
   const [addCtx, setAddCtx] = useState<AddContext | null>(null);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [copyWtTarget, setCopyWtTarget] = useState<string | null>(null);
 
   // --- Derived ------------------------------------------------------
   const q = search.trim().toLowerCase();
@@ -237,12 +248,125 @@ const AdminSettings = () => {
   }, [mainCategories, subCategoriesForMain, workTypes, q, searchActive]);
 
   const filteredTeams = useMemo(
-    () => [...teams].sort((a, b) => a.localeCompare(b)).filter((t) => !q || t.toLowerCase().includes(q)),
+    () => [...teams].filter((t) => !q || t.toLowerCase().includes(q)),
     [teams, q],
   );
   const filteredClients = useMemo(
-    () => [...clients].sort((a, b) => a.localeCompare(b)).filter((c) => !q || c.toLowerCase().includes(q)),
+    () => [...clients].filter((c) => !q || c.toLowerCase().includes(q)),
     [clients, q],
+  );
+
+  // DataTable rows for Teams and Clients — wrap strings for TanStack table.
+  type SimpleRow = { name: string };
+  const teamRows = useMemo<SimpleRow[]>(
+    () => filteredTeams.map((name) => ({ name })),
+    [filteredTeams],
+  );
+  const clientRows = useMemo<SimpleRow[]>(
+    () => filteredClients.map((name) => ({ name })),
+    [filteredClients],
+  );
+
+  const teamColumns = useMemo<ColumnDef<SimpleRow>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Team Name",
+        cell: ({ row }) => {
+          const name = row.original.name;
+          return (
+            <div className="flex items-center gap-2.5">
+              <div className="bg-blue-50 text-blue-600 rounded-md p-1.5 shrink-0">
+                <UsersIcon className="h-3.5 w-3.5" />
+              </div>
+              <span className="text-[14px] font-medium" style={{ color: "hsl(222 20% 15%)" }}>
+                {name}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "",
+        enableSorting: false,
+        size: 80,
+        cell: ({ row }) => {
+          const name = row.original.name;
+          return (
+            <div className="flex items-center justify-end gap-0.5">
+              <button
+                onClick={() => setEditTarget({ kind: "team", name })}
+                aria-label={`Edit ${name}`}
+                className="p-1.5 rounded hover:bg-muted transition-colors"
+                style={{ color: "hsl(220 10% 45%)" }}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setDeleteTarget({ type: "team", name })}
+                aria-label={`Delete ${name}`}
+                className="p-1.5 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        },
+      },
+    ],
+    [setEditTarget, setDeleteTarget],
+  );
+
+  const clientColumns = useMemo<ColumnDef<SimpleRow>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Client Name",
+        cell: ({ row }) => {
+          const name = row.original.name;
+          return (
+            <div className="flex items-center gap-2.5">
+              <div className="bg-violet-50 text-violet-600 rounded-md p-1.5 shrink-0">
+                <Building2 className="h-3.5 w-3.5" />
+              </div>
+              <span className="text-[14px] font-medium" style={{ color: "hsl(222 20% 15%)" }}>
+                {name}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "",
+        enableSorting: false,
+        size: 80,
+        cell: ({ row }) => {
+          const name = row.original.name;
+          return (
+            <div className="flex items-center justify-end gap-0.5">
+              <button
+                onClick={() => setEditTarget({ kind: "client", name })}
+                aria-label={`Edit ${name}`}
+                className="p-1.5 rounded hover:bg-muted transition-colors"
+                style={{ color: "hsl(220 10% 45%)" }}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setDeleteTarget({ type: "client", name })}
+                aria-label={`Delete ${name}`}
+                className="p-1.5 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        },
+      },
+    ],
+    [setEditTarget, setDeleteTarget],
   );
 
   const sortedMainCategories = useMemo(() => {
@@ -335,6 +459,28 @@ const AdminSettings = () => {
     toast.success(
       "Client renamed. Propagated to allocation records and journal @-tags.",
     );
+  };
+
+  // --- CSV client import -------------------------------------------
+  const handleCsvImport = async (names: string[]) => {
+    if (isApiMode) {
+      for (const name of names) {
+        await api.settings.createClient(name);
+      }
+      qc.invalidateQueries({ queryKey: ["settings"] });
+    } else {
+      for (const name of names) {
+        addClient(name);
+      }
+    }
+  };
+
+  // --- Copy work types ---------------------------------------------
+  const handleCopyWorkTypes = (wts: WorkType[]) => {
+    if (!copyWtTarget) return;
+    for (const wt of wts) {
+      setWorkTypeParents(wt.name, [...wt.parents, copyWtTarget]);
+    }
   };
 
   // --- Add flow -----------------------------------------------------
@@ -453,32 +599,77 @@ const AdminSettings = () => {
 
         {/* Teams */}
         {activeTab === "teams" && (
-          <SimpleGridCard
-            items={filteredTeams}
-            totalCount={teams.length}
-            search={search} onSearch={setSearch}
-            searchPlaceholder={searchPlaceholder}
-            addLabel="Add Team"
-            onAdd={() => openAdd({ type: "team" })}
-            onEdit={(name) => setEditTarget({ kind: "team", name })}
-            onDelete={(name) => setDeleteTarget({ type: "team", name })}
-            emptyText="No teams yet."
-          />
+          <div className="rounded-xl"
+            style={{
+              background: "hsl(0 0% 100%)",
+              border: "1px solid hsl(220 13% 91%)",
+              boxShadow: "0 1px 2px 0 hsl(220 13% 90% / 0.3)",
+            }}>
+            <div className="flex items-center gap-3 px-5 py-4" style={{ borderBottom: "1px solid hsl(220 13% 93%)" }}>
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5" style={{ color: "hsl(220 8% 55%)" }} />
+                <Input placeholder={searchPlaceholder} value={search} onChange={(e) => setSearch(e.target.value)}
+                  className="pl-9 h-9 text-sm border-0 shadow-none focus-visible:ring-1"
+                  style={{ background: "hsl(220 14% 96%)", color: "hsl(222 20% 15%)" }} />
+              </div>
+              <div className="flex-1" />
+              <Button onClick={() => openAdd({ type: "team" })} size="sm"
+                className="h-9 gap-1.5 text-[13px] font-medium shadow-sm"
+                style={{ background: "hsl(224 72% 45%)", color: "white" }}>
+                <Plus className="h-3.5 w-3.5" />
+                Add Team
+              </Button>
+            </div>
+            <div className="p-5">
+              <DataTable
+                columns={teamColumns}
+                data={teamRows}
+                pageSize={10}
+                emptyMessage={teams.length === 0 ? "No teams yet." : "No matches."}
+                defaultSorting={[{ id: "name", desc: false }]}
+              />
+            </div>
+          </div>
         )}
 
         {/* Clients */}
         {activeTab === "clients" && (
-          <SimpleGridCard
-            items={filteredClients}
-            totalCount={clients.length}
-            search={search} onSearch={setSearch}
-            searchPlaceholder={searchPlaceholder}
-            addLabel="Add Client"
-            onAdd={() => openAdd({ type: "client" })}
-            onEdit={(name) => setEditTarget({ kind: "client", name })}
-            onDelete={(name) => setDeleteTarget({ type: "client", name })}
-            emptyText="No clients yet."
-          />
+          <div className="rounded-xl"
+            style={{
+              background: "hsl(0 0% 100%)",
+              border: "1px solid hsl(220 13% 91%)",
+              boxShadow: "0 1px 2px 0 hsl(220 13% 90% / 0.3)",
+            }}>
+            <div className="flex items-center gap-3 px-5 py-4" style={{ borderBottom: "1px solid hsl(220 13% 93%)" }}>
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5" style={{ color: "hsl(220 8% 55%)" }} />
+                <Input placeholder={searchPlaceholder} value={search} onChange={(e) => setSearch(e.target.value)}
+                  className="pl-9 h-9 text-sm border-0 shadow-none focus-visible:ring-1"
+                  style={{ background: "hsl(220 14% 96%)", color: "hsl(222 20% 15%)" }} />
+              </div>
+              <div className="flex-1" />
+              <Button onClick={() => setCsvImportOpen(true)} variant="outline" size="sm"
+                className="h-9 gap-1.5 text-[13px] font-medium">
+                <Upload className="h-3.5 w-3.5" />
+                Import CSV
+              </Button>
+              <Button onClick={() => openAdd({ type: "client" })} size="sm"
+                className="h-9 gap-1.5 text-[13px] font-medium shadow-sm"
+                style={{ background: "hsl(224 72% 45%)", color: "white" }}>
+                <Plus className="h-3.5 w-3.5" />
+                Add Client
+              </Button>
+            </div>
+            <div className="p-5">
+              <DataTable
+                columns={clientColumns}
+                data={clientRows}
+                pageSize={10}
+                emptyMessage={clients.length === 0 ? "No clients yet." : "No matches."}
+                defaultSorting={[{ id: "name", desc: false }]}
+              />
+            </div>
+          </div>
         )}
 
         {/* Taxonomy */}
@@ -566,6 +757,7 @@ const AdminSettings = () => {
                   }}
                   onAddSubCategory={(parentMain) => openAdd({ type: "subCategory", parentMain })}
                   onAddWorkType={(parentName) => openAdd({ type: "workType", parentName })}
+                  onCopyWorkTypes={(parentName) => setCopyWtTarget(parentName)}
                   onDeleteMain={(name) => {
                     const subCount = subCategoriesForMain(name).length;
                     const workTypeCount = workTypes.filter((w) => w.parents.includes(name)).length;
@@ -762,6 +954,26 @@ const AdminSettings = () => {
         />
       )}
 
+      {/* CSV client import */}
+      <ClientCsvImportDialog
+        open={csvImportOpen}
+        existingClients={clients}
+        onClose={() => setCsvImportOpen(false)}
+        onImport={handleCsvImport}
+      />
+
+      {/* Copy work types */}
+      {copyWtTarget !== null && (
+        <CopyWorkTypesDialog
+          open
+          targetParent={copyWtTarget}
+          workTypes={workTypes}
+          parentGroups={parentGroups}
+          onClose={() => setCopyWtTarget(null)}
+          onCopy={handleCopyWorkTypes}
+        />
+      )}
+
       {/* Delete confirm */}
       <Dialog open={deleteTarget !== null} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <DialogContent className="max-w-md">
@@ -894,13 +1106,14 @@ interface TaxonomyOutlineProps {
   onDetachWorkType: (workTypeName: string, parentToRemove: string) => void;
   onAddSubCategory: (parentMain: string) => void;
   onAddWorkType: (parentName: string) => void;
+  onCopyWorkTypes: (parentName: string) => void;
   onDeleteMain: (name: string) => void;
   onDeleteSub: (name: string) => void;
 }
 
 const TaxonomyOutline = ({
   outlineSections, searchActive, collapsed, onToggleCollapsed,
-  onOpenEdit, onDetachWorkType, onAddSubCategory, onAddWorkType, onDeleteMain, onDeleteSub,
+  onOpenEdit, onDetachWorkType, onAddSubCategory, onAddWorkType, onCopyWorkTypes, onDeleteMain, onDeleteSub,
 }: TaxonomyOutlineProps) => {
   const visibleSections = outlineSections.filter((s) => s.include);
 
@@ -930,6 +1143,7 @@ const TaxonomyOutline = ({
           onDetachWorkType={onDetachWorkType}
           onAddSubCategory={onAddSubCategory}
           onAddWorkType={onAddWorkType}
+          onCopyWorkTypes={onCopyWorkTypes}
           onDeleteMain={onDeleteMain}
           onDeleteSub={onDeleteSub}
         />
@@ -947,13 +1161,14 @@ interface MainCategoryBlockProps {
   onDetachWorkType: TaxonomyOutlineProps["onDetachWorkType"];
   onAddSubCategory: TaxonomyOutlineProps["onAddSubCategory"];
   onAddWorkType: TaxonomyOutlineProps["onAddWorkType"];
+  onCopyWorkTypes: TaxonomyOutlineProps["onCopyWorkTypes"];
   onDeleteMain: TaxonomyOutlineProps["onDeleteMain"];
   onDeleteSub: TaxonomyOutlineProps["onDeleteSub"];
 }
 
 const MainCategoryBlock = ({
   section, isFirst, isCollapsed, onToggleCollapsed,
-  onOpenEdit, onDetachWorkType, onAddSubCategory, onAddWorkType, onDeleteMain, onDeleteSub,
+  onOpenEdit, onDetachWorkType, onAddSubCategory, onAddWorkType, onCopyWorkTypes, onDeleteMain, onDeleteSub,
 }: MainCategoryBlockProps) => {
   const { main, directWorkTypes, subSections, totalWorkTypeCount, subCount } = section;
   return (
@@ -1031,14 +1246,16 @@ const MainCategoryBlock = ({
                   onDetach={onDetachWorkType}
                 />
               )}
-              <div className="mt-1.5">
+              <div className="mt-1.5 flex items-center gap-2">
                 <GhostAddButton onClick={() => onAddWorkType(sub.name)} label="Add work type" small />
+                <GhostAddButton onClick={() => onCopyWorkTypes(sub.name)} label="Copy from…" small muted />
               </div>
             </div>
           ))}
           {subCount === 0 && (
-            <div className="px-5 pb-4 pl-[88px]">
+            <div className="px-5 pb-4 pl-[88px] flex items-center gap-2">
               <GhostAddButton onClick={() => onAddWorkType(main)} label="Add work type" small />
+              <GhostAddButton onClick={() => onCopyWorkTypes(main)} label="Copy from…" small muted />
             </div>
           )}
           <div className="px-5 pb-5 pl-[88px]">
@@ -2892,6 +3109,338 @@ const AISettingsPanel = () => {
         </div>
       </div>
     </div>
+  );
+};
+
+// =====================================================================
+// ClientCsvImportDialog
+// =====================================================================
+
+const ClientCsvImportDialog = ({
+  open,
+  existingClients,
+  onClose,
+  onImport,
+}: {
+  open: boolean;
+  existingClients: readonly string[];
+  onClose: () => void;
+  onImport: (names: string[]) => Promise<void>;
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [parsed, setParsed] = useState<{ name: string; isNew: boolean }[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    if (open) { setParsed([]); setDragging(false); setImporting(false); }
+  }, [open]);
+
+  const parseFile = (file: File) => {
+    Papa.parse<string[]>(file, {
+      header: false,
+      skipEmptyLines: true,
+      complete: (result) => {
+        const existingLower = new Set(existingClients.map((c) => c.toLowerCase()));
+        const seen = new Set<string>();
+        const rows: { name: string; isNew: boolean }[] = [];
+        for (const row of result.data) {
+          const name = (row[0] ?? "").trim();
+          if (!name) continue;
+          const lower = name.toLowerCase();
+          if (lower === "name") continue; // skip header row if present
+          if (seen.has(lower)) continue;
+          seen.add(lower);
+          rows.push({ name, isNew: !existingLower.has(lower) });
+        }
+        if (rows.length === 0) {
+          toast.error("No valid client names found in the CSV.");
+        } else {
+          setParsed(rows);
+        }
+      },
+      error: () => toast.error("Could not parse CSV."),
+    });
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) parseFile(file);
+  };
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) parseFile(file);
+    e.target.value = "";
+  };
+
+  const newNames = parsed.filter((r) => r.isNew).map((r) => r.name);
+  const dupCount = parsed.length - newNames.length;
+
+  const handleImport = async () => {
+    setImporting(true);
+    try {
+      await onImport(newNames);
+      toast.success(`Imported ${newNames.length} client${newNames.length !== 1 ? "s" : ""}.`);
+      onClose();
+    } catch {
+      toast.error("Import failed. Some clients may not have been saved.");
+      setImporting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-lg">Import Clients from CSV</DialogTitle>
+          <DialogDescription className="text-sm">
+            Upload a CSV with a <code className="text-xs font-mono bg-muted px-1 rounded">name</code>{" "}
+            column header, or just a plain list of names — one per row.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div
+          onDragEnter={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+          onClick={() => inputRef.current?.click()}
+          className="rounded-lg border-2 border-dashed flex flex-col items-center justify-center py-8 gap-2 cursor-pointer transition-colors"
+          style={{
+            borderColor: dragging ? "hsl(224 72% 55%)" : "hsl(220 13% 85%)",
+            background: dragging ? "hsl(224 72% 97%)" : "hsl(220 14% 98%)",
+          }}
+        >
+          <Upload className="h-6 w-6" style={{ color: "hsl(220 10% 55%)" }} />
+          <p className="text-[13px] font-medium" style={{ color: "hsl(222 20% 20%)" }}>
+            Drop a CSV file here, or click to browse
+          </p>
+          <p className="text-[11px]" style={{ color: "hsl(220 10% 55%)" }}>
+            .csv files only
+          </p>
+          <input ref={inputRef} type="file" accept=".csv" className="sr-only" onChange={handleFile} />
+        </div>
+
+        {parsed.length > 0 && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-[12px]">
+              <span style={{ color: "hsl(220 10% 45%)" }}>
+                <span className="font-semibold" style={{ color: "hsl(222 20% 15%)" }}>
+                  {newNames.length} new
+                </span>
+                {dupCount > 0 && `, ${dupCount} duplicate${dupCount !== 1 ? "s" : ""} (skipped)`}
+              </span>
+              <button
+                onClick={() => setParsed([])}
+                className="text-[11px] hover:underline"
+                style={{ color: "hsl(220 10% 50%)" }}
+              >
+                Clear
+              </button>
+            </div>
+            <div
+              className="max-h-[200px] overflow-y-auto rounded-md divide-y"
+              style={{ border: "1px solid hsl(220 13% 91%)", borderColor: "hsl(220 13% 94%)" }}
+            >
+              {parsed.map((r, i) => (
+                <div key={i} className="flex items-center gap-2 px-3 py-2">
+                  <Building2 className="h-3.5 w-3.5 shrink-0" style={{ color: "hsl(220 10% 50%)" }} />
+                  <span
+                    className="flex-1 text-[13px] font-medium"
+                    style={{ color: r.isNew ? "hsl(222 20% 15%)" : "hsl(220 10% 55%)" }}
+                  >
+                    {r.name}
+                  </span>
+                  {r.isNew ? (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded font-semibold"
+                      style={{ background: "hsl(142 76% 93%)", color: "hsl(142 72% 29%)" }}
+                    >
+                      NEW
+                    </span>
+                  ) : (
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded"
+                      style={{ background: "hsl(220 14% 93%)", color: "hsl(220 10% 50%)" }}
+                    >
+                      duplicate
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} size="sm" disabled={importing}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleImport}
+            size="sm"
+            disabled={newNames.length === 0 || importing}
+            style={{ background: "hsl(224 72% 45%)", color: "white" }}
+          >
+            {importing ? (
+              <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Importing…</>
+            ) : (
+              `Import ${newNames.length > 0 ? `${newNames.length} ` : ""}client${newNames.length !== 1 ? "s" : ""}`
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+// =====================================================================
+// CopyWorkTypesDialog
+// =====================================================================
+
+const CopyWorkTypesDialog = ({
+  open,
+  targetParent,
+  workTypes,
+  parentGroups,
+  onClose,
+  onCopy,
+}: {
+  open: boolean;
+  targetParent: string;
+  workTypes: readonly WorkType[];
+  parentGroups: { main: string; items: string[]; hasSubs: boolean }[];
+  onClose: () => void;
+  onCopy: (wts: WorkType[]) => void;
+}) => {
+  const [sourceParent, setSourceParent] = useState("");
+
+  useEffect(() => {
+    if (open) setSourceParent("");
+  }, [open]);
+
+  const allOtherParents = useMemo(
+    () => parentGroups.flatMap((g) => g.items).filter((p) => p !== targetParent),
+    [parentGroups, targetParent],
+  );
+
+  const toCopy = useMemo(
+    () =>
+      sourceParent
+        ? workTypes.filter((wt) => wt.parents.includes(sourceParent) && !wt.parents.includes(targetParent))
+        : [],
+    [workTypes, sourceParent, targetParent],
+  );
+
+  const alreadyAttached = useMemo(
+    () =>
+      sourceParent
+        ? workTypes.filter((wt) => wt.parents.includes(sourceParent) && wt.parents.includes(targetParent)).length
+        : 0,
+    [workTypes, sourceParent, targetParent],
+  );
+
+  const submit = () => {
+    if (toCopy.length === 0) return;
+    onCopy(toCopy);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-lg flex items-center gap-2">
+            <Copy className="h-4 w-4" style={{ color: "hsl(224 72% 45%)" }} />
+            Copy Work Types
+          </DialogTitle>
+          <DialogDescription className="text-sm">
+            Pull work types from another category into{" "}
+            <span className="font-semibold" style={{ color: "hsl(222 20% 15%)" }}>
+              {targetParent}
+            </span>
+            . Existing work types keep all their current parents.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Copy from</Label>
+            {allOtherParents.length === 0 ? (
+              <p className="text-[13px] py-2" style={{ color: "hsl(220 10% 50%)" }}>
+                No other categories available.
+              </p>
+            ) : (
+              <Select value={sourceParent} onValueChange={setSourceParent}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select source category…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allOtherParents.map((p) => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </div>
+
+          {sourceParent && (
+            <div
+              className="rounded-md px-3 py-2.5 space-y-2 text-[12px]"
+              style={{ background: "hsl(220 14% 96%)", border: "1px solid hsl(220 13% 92%)" }}
+            >
+              {toCopy.length > 0 ? (
+                <>
+                  <p style={{ color: "hsl(222 20% 25%)" }}>
+                    <span className="font-semibold" style={{ color: "hsl(224 72% 45%)" }}>
+                      {toCopy.length} work type{toCopy.length !== 1 ? "s" : ""}
+                    </span>
+                    {" "}will be added to <span className="font-medium">{targetParent}</span>
+                    {alreadyAttached > 0 && (
+                      <span style={{ color: "hsl(220 10% 50%)" }}>
+                        {" "}({alreadyAttached} already attached, skipped)
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex flex-wrap gap-1 pt-0.5">
+                    {toCopy.map((wt) => (
+                      <span
+                        key={wt.name}
+                        className="inline-flex items-center h-5 px-1.5 rounded text-[11px] font-medium"
+                        style={{ background: "hsl(224 72% 95%)", color: "hsl(224 72% 35%)" }}
+                      >
+                        {wt.name}
+                      </span>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p style={{ color: "hsl(220 10% 50%)" }}>
+                  All work types from <span className="font-medium">{sourceParent}</span> are already in{" "}
+                  <span className="font-medium">{targetParent}</span>.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} size="sm">
+            Cancel
+          </Button>
+          <Button
+            onClick={submit}
+            size="sm"
+            disabled={toCopy.length === 0}
+            style={{ background: "hsl(224 72% 45%)", color: "white" }}
+          >
+            Copy {toCopy.length > 0 ? `${toCopy.length} work type${toCopy.length !== 1 ? "s" : ""}` : "work types"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

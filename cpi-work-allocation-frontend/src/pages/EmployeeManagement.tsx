@@ -7,7 +7,10 @@ import {
 } from "@/contexts/EmployeesContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useClientsConfig } from "@/contexts/ClientsConfigContext";
+import { useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/apiClient";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import {
   parseEmployeeCsv,
   validateRows,
@@ -28,14 +31,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -68,7 +63,6 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
-import { TablePagination } from "@/components/ui/TablePagination";
 
 // ---------------------------------------------------------------------
 // Small helpers
@@ -82,16 +76,6 @@ const ROLE_OPTIONS: readonly UserRole[] = [
   "Finance",
   "Admin",
 ];
-
-/**
- * Page size for the directory's List view.
- *
- * Only the flat List view paginates; the By-Manager view is grouped
- * by section and doesn't need pagination at this scale (each section
- * is naturally bounded by team size). If a manager ever has more than
- * ~20 reports, revisit.
- */
-const DIRECTORY_PAGE_SIZE = 10;
 
 const roleBadgeClass = (role: UserRole): string => {
   switch (role) {
@@ -158,10 +142,18 @@ type ViewMode = "list" | "byManager";
 
 const EmployeeManagement = () => {
   const { employees, addEmployee, updateEmployee, removeEmployee } = useEmployees();
-  const { currentUser } = useAuth();
+  const { currentUser, isApiMode } = useAuth();
   const { teams } = useClientsConfig();
+  const qc = useQueryClient();
 
   const [viewMode, setViewMode] = useState<ViewMode>("list");
+
+  // Clear selection whenever the user switches views.
+  useEffect(() => {
+    setSelectedEmployees([]);
+    setSelectionResetKey((k) => k + 1);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
   const [search, setSearch] = useState("");
   const [filterRole, setFilterRole] = useState<string>("all");
   const [filterTeam, setFilterTeam] = useState<string>("all");
@@ -169,13 +161,11 @@ const EmployeeManagement = () => {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [deleteTarget, setDeleteTarget] = useState<Employee | null>(null);
 
-  // Pagination for the flat List view. Reset to 1 whenever the
-  // filter definition changes so the user isn't stranded on a page
-  // that no longer exists after narrowing the result set.
-  const [currentPage, setCurrentPage] = useState(1);
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [search, filterRole, filterTeam]);
+  // Bulk selection state
+  const [selectedEmployees, setSelectedEmployees] = useState<Employee[]>([]);
+  const [selectionResetKey, setSelectionResetKey] = useState(0);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkActionPending, setBulkActionPending] = useState(false);
 
   // --- CSV import state ---
   // parsedRows === null   -> import dialog closed OR not parsed yet
@@ -221,37 +211,10 @@ const EmployeeManagement = () => {
     };
   }, [search, filterRole, filterTeam]);
 
+  // DataTable owns sorting and pagination; we only filter externally.
   const filtered = useMemo(
-    () =>
-      employees
-        .filter(matchesFilters)
-        .sort((a, b) =>
-          `${a.firstName} ${a.lastName}`.localeCompare(
-            `${b.firstName} ${b.lastName}`,
-          ),
-        ),
+    () => employees.filter(matchesFilters),
     [employees, matchesFilters],
-  );
-
-  // Slice for the current page. Clamp to the last available page in
-  // case the list shrank (delete, role/team change, etc.) — buttons
-  // disable correctly via TablePagination, but the slice itself needs
-  // to reflect the clamped page or it'd render empty.
-  const totalDirectoryPages = Math.max(
-    1,
-    Math.ceil(filtered.length / DIRECTORY_PAGE_SIZE),
-  );
-  const safeDirectoryPage = Math.min(
-    Math.max(1, currentPage),
-    totalDirectoryPages,
-  );
-  const pagedEmployees = useMemo(
-    () =>
-      filtered.slice(
-        (safeDirectoryPage - 1) * DIRECTORY_PAGE_SIZE,
-        safeDirectoryPage * DIRECTORY_PAGE_SIZE,
-      ),
-    [filtered, safeDirectoryPage],
   );
 
   // For the By-Manager view: group reports by managerId.
@@ -415,6 +378,66 @@ const EmployeeManagement = () => {
         : `${emp?.firstName} is now top of chain.`,
     );
     return true;
+  };
+
+  const handleClearSelection = () => {
+    setSelectedEmployees([]);
+    setSelectionResetKey((k) => k + 1);
+  };
+
+  // --- Bulk action handlers ---
+
+  const handleBulkDelete = async () => {
+    setBulkDeleteOpen(false);
+    setBulkActionPending(true);
+    const ids = selectedEmployees.map((e) => e.id);
+    try {
+      if (isApiMode) {
+        const result = await api.employees.bulkDelete(ids);
+        await qc.invalidateQueries({ queryKey: ["employees"] });
+        const n = result.deleted.length;
+        if (n > 0) toast.success(`Deleted ${n} employee${n === 1 ? "" : "s"}.`);
+        if (result.skipped.length > 0)
+          toast.warning(
+            `${result.skipped.length} could not be deleted (manager with reports or self).`,
+          );
+      } else {
+        let deleted = 0;
+        let skipped = 0;
+        for (const id of ids) {
+          const res = await removeEmployee(id, currentUser?.id ?? null);
+          if (res.ok) deleted++;
+          else skipped++;
+        }
+        if (deleted > 0) toast.success(`Deleted ${deleted} employee${deleted === 1 ? "" : "s"}.`);
+        if (skipped > 0) toast.warning(`${skipped} could not be deleted.`);
+      }
+    } catch {
+      toast.error("Bulk delete failed. Please try again.");
+    } finally {
+      setBulkActionPending(false);
+      setSelectedEmployees([]);
+      setSelectionResetKey((k) => k + 1);
+    }
+  };
+
+  const handleBulkResend = async () => {
+    if (!isApiMode) return;
+    setBulkActionPending(true);
+    const ids = selectedEmployees.map((e) => e.id);
+    try {
+      const result = await api.employees.bulkResendWelcome(ids);
+      const n = result.sent.length;
+      if (n > 0) toast.success(`Welcome email sent to ${n} employee${n === 1 ? "" : "s"}.`);
+      if (result.skipped.length > 0)
+        toast.info(
+          `${result.skipped.length} already completed setup — skipped.`,
+        );
+    } catch {
+      toast.error("Could not send welcome emails. Please try again.");
+    } finally {
+      setBulkActionPending(false);
+    }
   };
 
   // --- CSV import handlers ---
@@ -624,6 +647,113 @@ const EmployeeManagement = () => {
     [employees],
   );
 
+  // Column definitions for the DataTable list view.
+  // Closures capture the handlers so cells can call them directly.
+  const employeeColumns = useMemo<ColumnDef<Employee>[]>(
+    () => [
+      {
+        id: "name",
+        header: "Name",
+        accessorFn: (row) => `${row.firstName} ${row.lastName}`,
+        cell: ({ row }) => {
+          const emp = row.original;
+          const isMe = emp.id === currentUser?.id;
+          return (
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-medium">
+                  {emp.firstName} {emp.lastName}
+                </span>
+                {isMe && (
+                  <Badge variant="outline" className="h-5 text-[10px] px-1.5">
+                    You
+                  </Badge>
+                )}
+              </div>
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                {emp.id}
+              </span>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: "email",
+        header: "Email",
+        cell: ({ row }) => (
+          <span className="flex items-center gap-1 text-sm">
+            <Mail className="h-3 w-3 text-muted-foreground" />
+            {row.original.email}
+          </span>
+        ),
+      },
+      {
+        id: "roles",
+        header: "Role",
+        accessorFn: (row) => row.roles.join(", "),
+        cell: ({ row }) => (
+          <div className="flex flex-wrap gap-1">
+            {row.original.roles.map((r) => (
+              <Badge key={r} variant="outline" className={roleBadgeClass(r)}>
+                {r}
+              </Badge>
+            ))}
+          </div>
+        ),
+        sortingFn: (a, b) => {
+          const order: Record<UserRole, number> = { Admin: 0, Manager: 1, Finance: 2, Employee: 3 };
+          const rankA = Math.min(...a.original.roles.map((r) => order[r] ?? 99));
+          const rankB = Math.min(...b.original.roles.map((r) => order[r] ?? 99));
+          return rankA - rankB;
+        },
+      },
+      {
+        accessorKey: "team",
+        header: "Team",
+        cell: ({ row }) => (
+          <span className="text-sm">{row.original.team}</span>
+        ),
+      },
+      {
+        accessorKey: "jobTitle",
+        header: "Job Title",
+        cell: ({ row }) => (
+          <span className="text-sm">{row.original.jobTitle}</span>
+        ),
+      },
+      {
+        id: "manager",
+        header: "Manager",
+        accessorFn: (row) => row.managerName ?? "",
+        cell: ({ row }) => (
+          <span className="text-sm text-muted-foreground">
+            {row.original.managerName || <span className="italic">—</span>}
+          </span>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        enableSorting: false,
+        size: 120,
+        cell: ({ row }) => {
+          const emp = row.original;
+          return (
+            <RowActions
+              emp={emp}
+              isMe={emp.id === currentUser?.id ?? false}
+              allManagers={allManagers}
+              onEdit={openEdit}
+              onDelete={setDeleteTarget}
+              onChangeManager={handleChangeManager}
+            />
+          );
+        },
+      },
+    ],
+    [currentUser, allManagers, openEdit, setDeleteTarget, handleChangeManager],
+  );
+
   return (
     <div className="p-6 space-y-6 overflow-y-auto h-[calc(100vh-3rem)]">
       {/* Header */}
@@ -749,54 +879,67 @@ const EmployeeManagement = () => {
       {viewMode === "list" && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">
-              Directory
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                ({filtered.length} {filtered.length === 1 ? "result" : "results"})
-              </span>
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-base">
+                Directory
+                <span className="ml-2 text-sm font-normal text-muted-foreground">
+                  ({filtered.length} {filtered.length === 1 ? "result" : "results"})
+                </span>
+              </CardTitle>
+              {selectedEmployees.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-primary">
+                    {selectedEmployees.length}{" "}
+                    {selectedEmployees.length === 1 ? "employee" : "employees"} selected
+                  </span>
+                  {isApiMode && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleBulkResend}
+                      disabled={bulkActionPending}
+                      className="gap-1.5"
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                      Resend Welcome Email
+                    </Button>
+                  )}
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setBulkDeleteOpen(true)}
+                    disabled={bulkActionPending}
+                    className="gap-1.5"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Delete Selected
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleClearSelection}
+                    disabled={bulkActionPending}
+                    className="gap-1 text-muted-foreground"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Clear
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
-            {filtered.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-12 text-center">
-                No employees match the current filters.
-              </p>
-            ) : (
-              <>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Team</TableHead>
-                      <TableHead>Job Title</TableHead>
-                      <TableHead>Manager</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pagedEmployees.map((e) => (
-                      <EmployeeRow
-                        key={e.id}
-                        emp={e}
-                        currentUserId={currentUser?.id ?? null}
-                        allManagers={allManagers}
-                        onEdit={openEdit}
-                        onDelete={setDeleteTarget}
-                        onChangeManager={handleChangeManager}
-                      />
-                    ))}
-                  </TableBody>
-                </Table>
-                <TablePagination
-                  page={currentPage}
-                  pageSize={DIRECTORY_PAGE_SIZE}
-                  totalItems={filtered.length}
-                  onPageChange={setCurrentPage}
-                />
-              </>
-            )}
+            <DataTable
+              columns={employeeColumns}
+              data={filtered}
+              pageSize={10}
+              emptyMessage="No employees match the current filters."
+              defaultSorting={[{ id: "name", desc: false }]}
+              selectable
+              getRowId={(e) => e.id}
+              onSelectionChange={setSelectedEmployees}
+              resetKey={selectionResetKey}
+            />
           </CardContent>
         </Card>
       )}
@@ -1040,6 +1183,28 @@ const EmployeeManagement = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Bulk delete confirm dialog */}
+      <Dialog open={bulkDeleteOpen} onOpenChange={(o) => !o && setBulkDeleteOpen(false)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete {selectedEmployees.length} employees?</DialogTitle>
+            <DialogDescription>
+              This will permanently remove the selected employees. Managers with
+              active reports will be skipped automatically. This action cannot be
+              undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleBulkDelete} disabled={bulkActionPending}>
+              Delete All
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Delete confirm modal */}
       <Dialog
         open={!!deleteTarget}
@@ -1079,79 +1244,6 @@ const EmployeeManagement = () => {
 // Sub-components
 // ---------------------------------------------------------------------
 
-interface EmployeeRowProps {
-  emp: Employee;
-  currentUserId: string | null;
-  allManagers: readonly Employee[];
-  onEdit: (emp: Employee) => void;
-  onDelete: (emp: Employee) => void;
-  onChangeManager: (
-    employeeId: string,
-    newManagerId: string | null,
-  ) => Promise<boolean>;
-}
-
-/** Row used by the flat List view. */
-const EmployeeRow = ({
-  emp,
-  currentUserId,
-  allManagers,
-  onEdit,
-  onDelete,
-  onChangeManager,
-}: EmployeeRowProps) => {
-  const isMe = emp.id === currentUserId;
-  return (
-    <TableRow className="hover:bg-muted/40">
-      <TableCell>
-        <div className="flex items-center gap-2">
-          <span className="font-medium">
-            {emp.firstName} {emp.lastName}
-          </span>
-          {isMe && (
-            <Badge variant="outline" className="h-5 text-[10px] px-1.5">
-              You
-            </Badge>
-          )}
-        </div>
-        <span className="text-[11px] text-muted-foreground tabular-nums">
-          {emp.id}
-        </span>
-      </TableCell>
-      <TableCell>
-        <span className="flex items-center gap-1 text-sm">
-          <Mail className="h-3 w-3 text-muted-foreground" />
-          {emp.email}
-        </span>
-      </TableCell>
-      <TableCell>
-        {/* Multi-role: render one badge per assigned role. */}
-        <div className="flex flex-wrap gap-1">
-          {emp.roles.map((r) => (
-            <Badge key={r} variant="outline" className={roleBadgeClass(r)}>
-              {r}
-            </Badge>
-          ))}
-        </div>
-      </TableCell>
-      <TableCell className="text-sm">{emp.team}</TableCell>
-      <TableCell className="text-sm">{emp.jobTitle}</TableCell>
-      <TableCell className="text-sm text-muted-foreground">
-        {emp.managerName || <span className="italic">—</span>}
-      </TableCell>
-      <TableCell className="text-right">
-        <RowActions
-          emp={emp}
-          isMe={isMe}
-          allManagers={allManagers}
-          onEdit={onEdit}
-          onDelete={onDelete}
-          onChangeManager={onChangeManager}
-        />
-      </TableCell>
-    </TableRow>
-  );
-};
 
 interface ManagerSectionProps {
   headerIcon: React.ReactNode;
@@ -1283,8 +1375,9 @@ interface RowActionsProps {
 }
 
 /**
- * Actions cluster: Change Manager (popover), Edit (icon), Delete (icon).
- * Shared between the List view's TableCell and the By-Manager row.
+ * Actions cluster: Change Manager (popover), Resend Welcome (API mode),
+ * Edit (icon), Delete (icon).
+ * Shared between the List view's DataTable column and the By-Manager row.
  */
 const RowActions = ({
   emp,
@@ -1294,7 +1387,26 @@ const RowActions = ({
   onDelete,
   onChangeManager,
 }: RowActionsProps) => {
+  const { isApiMode } = useAuth();
   const [popOpen, setPopOpen] = useState(false);
+  const [resendPending, setResendPending] = useState(false);
+
+  const handleResend = async () => {
+    setResendPending(true);
+    try {
+      const result = await api.employees.bulkResendWelcome([emp.id]);
+      if (result.sent.includes(emp.id)) {
+        toast.success(`Welcome email sent to ${emp.firstName}.`);
+      } else {
+        const skip = result.skipped.find((s) => s.id === emp.id);
+        toast.info(skip?.reason ?? `Could not resend to ${emp.firstName}.`);
+      }
+    } catch {
+      toast.error("Failed to send welcome email.");
+    } finally {
+      setResendPending(false);
+    }
+  };
 
   // Managers eligible as a target for this employee's "Change Manager"
   // action. Exclude the employee themselves (can't report to yourself).
@@ -1376,6 +1488,15 @@ const RowActions = ({
         </PopoverContent>
       </Popover>
 
+      <button
+        onClick={handleResend}
+        disabled={!isApiMode || isMe || resendPending}
+        className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+        aria-label={`Resend welcome email to ${emp.firstName} ${emp.lastName}`}
+        title={isMe ? "Cannot resend to yourself" : !isApiMode ? "Not available in local mode" : "Resend welcome email"}
+      >
+        <Mail className="h-3.5 w-3.5" />
+      </button>
       <button
         onClick={() => onEdit(emp)}
         className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"

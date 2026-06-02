@@ -126,11 +126,11 @@ const AppSidebar = () => {
         <Button
           variant="ghost"
           size={collapsed ? "icon" : "sm"}
-          className="w-full justify-start text-muted-foreground hover:text-destructive"
+          className="w-full justify-start text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
           onClick={logout}
         >
-          <LogOut className="h-4 w-4" />
-          {!collapsed && <span className="ml-2">Sign Out</span>}
+          <LogOut className="h-4 w-4 transition-colors" />
+          {!collapsed && <span className="ml-2 transition-colors">Sign Out</span>}
         </Button>
       </SidebarFooter>
 

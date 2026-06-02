@@ -15,6 +15,9 @@ const adminOnly = requireRole('Admin');
 
 router.get('/', ctrl.list);
 router.get('/:id', validate(IdParamSchema, 'params'), ctrl.getOne);
+// Bulk operations — must be declared before /:id POST routes to avoid path conflicts
+router.post('/bulk-delete', adminOnly, ctrl.bulkDelete);
+router.post('/bulk-resend-welcome', adminOnly, ctrl.bulkResendWelcome);
 router.post('/', adminOnly, validate(CreateEmployeeSchema), ctrl.create);
 router.put(
   '/:id',

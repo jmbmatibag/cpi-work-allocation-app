@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect } from "react";
-import { Plus, Trash2, Save, AlertCircle, RotateCcw } from "lucide-react";
+import { Plus, Trash2, Save, AlertCircle, RotateCcw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { TablePagination } from "@/components/ui/TablePagination";
 import {
   Select,
   SelectContent,
@@ -103,6 +104,32 @@ const InferenceRulesEditor = () => {
   }, [baseline]);
 
   const isDirty = !draftsEqual(drafts, baseline);
+
+  // Search + pagination for the rule list.
+  const [searchKw, setSearchKw] = useState("");
+  const [rulePage, setRulePage] = useState(1);
+
+  const RULES_PAGE_SIZE = 10;
+
+  useEffect(() => {
+    setRulePage(1);
+  }, [searchKw, drafts.length]);
+
+  const visibleDrafts = useMemo(() => {
+    const q = searchKw.trim().toLowerCase();
+    if (!q) return drafts;
+    return drafts.filter(
+      (r) =>
+        r.keywordsText.toLowerCase().includes(q) ||
+        r.category.toLowerCase().includes(q) ||
+        (r.subCategory?.toLowerCase().includes(q) ?? false),
+    );
+  }, [drafts, searchKw]);
+
+  const pagedDrafts = useMemo(
+    () => visibleDrafts.slice((rulePage - 1) * RULES_PAGE_SIZE, rulePage * RULES_PAGE_SIZE),
+    [visibleDrafts, rulePage],
+  );
 
   // Validation — empty keywords or empty category = invalid.
   const invalidCount = useMemo(() => {
@@ -255,8 +282,24 @@ const InferenceRulesEditor = () => {
         </div>
       </div>
 
+      {/* Search bar */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <Input
+          value={searchKw}
+          onChange={(e) => setSearchKw(e.target.value)}
+          placeholder="Search keywords or category…"
+          className="pl-8 h-8 text-sm"
+        />
+      </div>
+
       <div className="space-y-2">
-        {drafts.map((rule) => {
+        {visibleDrafts.length === 0 && searchKw && (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            No rules match "{searchKw}".
+          </p>
+        )}
+        {pagedDrafts.map((rule) => {
           const kwCount = parseKeywords(rule.keywordsText).length;
           const invalid = kwCount === 0 || !rule.category;
           const subsForMain = subCategoriesForMain(rule.category);
@@ -392,13 +435,22 @@ const InferenceRulesEditor = () => {
           );
         })}
 
-        <Button
-          variant="outline"
-          className="w-full gap-1 border-dashed"
-          onClick={addDraft}
-        >
-          <Plus className="h-4 w-4" /> Add Rule
-        </Button>
+        <TablePagination
+          page={rulePage}
+          pageSize={RULES_PAGE_SIZE}
+          totalItems={visibleDrafts.length}
+          onPageChange={setRulePage}
+        />
+
+        {!searchKw && (
+          <Button
+            variant="outline"
+            className="w-full gap-1 border-dashed"
+            onClick={addDraft}
+          >
+            <Plus className="h-4 w-4" /> Add Rule
+          </Button>
+        )}
       </div>
     </div>
   );

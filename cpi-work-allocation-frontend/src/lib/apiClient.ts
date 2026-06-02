@@ -315,6 +315,18 @@ const employees = {
 
   remove: (id: string) =>
     del<void>(`/api/employees/${encodeURIComponent(id)}`),
+
+  bulkDelete: (ids: string[]) =>
+    post<{ deleted: string[]; skipped: { id: string; reason: string }[] }>(
+      '/api/employees/bulk-delete',
+      { ids },
+    ),
+
+  bulkResendWelcome: (ids: string[]) =>
+    post<{ sent: string[]; skipped: { id: string; reason: string }[] }>(
+      '/api/employees/bulk-resend-welcome',
+      { ids },
+    ),
 };
 
 // ---------------------------------------------------------------------------

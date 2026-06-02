@@ -70,6 +70,17 @@ export function toMinutes(t: ParsedTime): number {
   return t.h * 60 + t.m;
 }
 
+/**
+ * Like toMinutes but treats 12:00 AM (midnight = 0 min) as end-of-day
+ * (1440 min = 24:00) when the corresponding start time is after midnight.
+ * This lets "9:00 AM – 12:00 AM" be recognised as a valid 15-hour range
+ * instead of being rejected as a reversed range.
+ */
+function endMinutes(endTime: ParsedTime, startTime: ParsedTime): number {
+  const e = toMinutes(endTime);
+  return e === 0 && toMinutes(startTime) > 0 ? 1440 : e;
+}
+
 export function minutesToStr(total: number): string {
   if (total <= 0) return "";
   const h = Math.floor(total / 60);
@@ -201,7 +212,9 @@ export function findTimeRange(text: string): TimeRange | null {
   if (!RANGE_SEP_RE.test(gap)) return null;
 
   // Reject same-day reversed/equal ranges.
-  if (toMinutes(second.time) <= toMinutes(first.time)) return null;
+  // endMinutes treats 12:00 AM (midnight) as 1440 when start > 0,
+  // so "9:00 AM – 12:00 AM" is accepted as a valid end-of-day range.
+  if (endMinutes(second.time, first.time) <= toMinutes(first.time)) return null;
 
   return {
     start: first.time,
@@ -520,7 +533,7 @@ export function validateJournalLineTime(text: string): LineValidation {
     const strict = findAllTimes(text);
     if (
       strict.length >= 2 &&
-      toMinutes(strict[1].time) <= toMinutes(strict[0].time)
+      endMinutes(strict[1].time, strict[0].time) <= toMinutes(strict[0].time)
     ) {
       return {
         valid: false,

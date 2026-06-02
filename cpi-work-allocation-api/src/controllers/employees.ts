@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
+import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { logAuditTx } from '../lib/audit.js';
 import { sendWelcomeEmail, PASSWORD_SETUP_TTL_MS } from '../lib/mailer.js';
@@ -293,4 +294,142 @@ export async function remove(req: AuthRequest, res: Response): Promise<void> {
     });
   });
   res.status(204).send();
+}
+
+// ---------------------------------------------------------------------------
+// Bulk operations
+// ---------------------------------------------------------------------------
+
+const BulkIdsBody = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(100),
+});
+
+/**
+ * POST /api/employees/bulk-delete
+ * Body: { ids: string[] }
+ *
+ * Applies the same guards as single `remove` to each id:
+ *   - skips the requesting user's own id
+ *   - skips managers who still have reports
+ *
+ * Returns a summary so the client can show which were deleted and which
+ * were skipped with a reason, without requiring multiple round-trips.
+ */
+export async function bulkDelete(req: AuthRequest, res: Response): Promise<void> {
+  const parse = BulkIdsBody.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: 'VALIDATION_ERROR' });
+    return;
+  }
+  const { ids } = parse.data;
+
+  const deleted: string[] = [];
+  const skipped: { id: string; reason: string }[] = [];
+
+  for (const id of ids) {
+    if (req.userId === id) {
+      skipped.push({ id, reason: 'Cannot delete your own account.' });
+      continue;
+    }
+
+    const target = await prisma.user.findUnique({ where: { id } });
+    if (!target) {
+      skipped.push({ id, reason: 'Not found.' });
+      continue;
+    }
+
+    if (target.roles.includes('Manager')) {
+      const reportCount = await prisma.user.count({ where: { managerId: id } });
+      if (reportCount > 0) {
+        skipped.push({
+          id,
+          reason: `${target.firstName} ${target.lastName} has ${reportCount} direct ${reportCount === 1 ? 'report' : 'reports'}. Reassign first.`,
+        });
+        continue;
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.user.delete({ where: { id } });
+      await logAuditTx(tx, {
+        userId: req.userId!,
+        action: 'delete',
+        entity: 'User',
+        entityId: id,
+        payload: {
+          email: target.email,
+          roles: [...target.roles],
+          team: target.team,
+          managerId: target.managerId,
+          bulkOp: true,
+        },
+      });
+    });
+    deleted.push(id);
+  }
+
+  res.json({ deleted, skipped });
+}
+
+/**
+ * POST /api/employees/bulk-resend-welcome
+ * Body: { ids: string[] }
+ *
+ * Re-issues the password-setup email for each employee whose account is
+ * still in the setup-pending state (passwordHash === null). Employees
+ * who have already completed setup are returned in `skipped`.
+ *
+ * A fresh 256-bit token is generated for each eligible user, replacing
+ * the old one (expired or still valid). The 24-hour TTL is reset from now.
+ */
+export async function bulkResendWelcome(req: AuthRequest, res: Response): Promise<void> {
+  const parse = BulkIdsBody.safeParse(req.body);
+  if (!parse.success) {
+    res.status(400).json({ error: 'VALIDATION_ERROR' });
+    return;
+  }
+  const { ids } = parse.data;
+
+  const sent: string[] = [];
+  const skipped: { id: string; reason: string }[] = [];
+
+  for (const id of ids) {
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      skipped.push({ id, reason: 'Not found.' });
+      continue;
+    }
+
+    if (user.passwordHash) {
+      skipped.push({
+        id,
+        reason: `${user.firstName} ${user.lastName} has already completed account setup.`,
+      });
+      continue;
+    }
+
+    // Regenerate setup token — replaces any existing (expired or live) token.
+    const setupToken = randomBytes(32).toString('base64url');
+    const setupExpiresAt = new Date(Date.now() + PASSWORD_SETUP_TTL_MS);
+
+    await prisma.user.update({
+      where: { id },
+      data: { passwordSetupToken: setupToken, passwordSetupExpiresAt: setupExpiresAt },
+    });
+
+    void sendWelcomeEmail(
+      user.email,
+      `${user.firstName} ${user.lastName}`.trim() || user.email,
+      setupToken,
+    ).catch((err) => {
+      console.error(
+        `[employees.bulkResendWelcome] Email to ${user.email} failed:`,
+        (err as Error).message,
+      );
+    });
+
+    sent.push(id);
+  }
+
+  res.json({ sent, skipped });
 }

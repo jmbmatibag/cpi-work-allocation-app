@@ -77,11 +77,18 @@ type LineUnit = {
   categoryTag?: string;
 };
 
-/** Duration in minutes between two HH:MM strings. Returns 0 for invalid/reversed ranges. */
+/** Duration in minutes between two HH:MM strings. Returns 0 for invalid/reversed ranges.
+ *  "00:00" as end is treated as 1440 (24:00, end-of-day) when start is after midnight,
+ *  matching the endMinutes() logic in timelineParser so midnight end-times produce
+ *  the correct duration instead of 0.
+ */
 function calcMinutes(start: string, end: string): number {
   const [sh, sm] = start.split(":").map(Number);
   const [eh, em] = end.split(":").map(Number);
-  return Math.max(0, eh * 60 + em - (sh * 60 + sm));
+  const startTotal = sh * 60 + sm;
+  const endTotal = eh * 60 + em;
+  const effectiveEnd = endTotal === 0 && startTotal > 0 ? 1440 : endTotal;
+  return Math.max(0, effectiveEnd - startTotal);
 }
 
 /**
