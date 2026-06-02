@@ -32,4 +32,10 @@ export const InferenceRuleSchema = z.object({
 export const BulkInferenceRulesSchema = z.object({
     rules: z.array(InferenceRuleSchema),
 });
+export const BulkUpdateWorkTypeParentsSchema = z.object({
+    updates: z.array(z.object({
+        id: z.number().int(),
+        parents: z.array(z.string()).min(1),
+    })).min(1),
+});
 //# sourceMappingURL=settings.js.map

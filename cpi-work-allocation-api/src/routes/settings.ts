@@ -9,6 +9,7 @@ import {
   AddWorkTypeSchema,
   SetWorkTypeParentsSchema,
   BulkInferenceRulesSchema,
+  BulkUpdateWorkTypeParentsSchema,
   NumericIdParamSchema,
 } from 'cpi-work-allocation-shared';
 import * as ctrl from '../controllers/settings.js';
@@ -98,6 +99,12 @@ router.delete(
 
 // ── Work Types ────────────────────────────────────────────────────────────
 router.post('/work-types', adminOnly, validate(AddWorkTypeSchema), ctrl.createWorkType);
+router.post(
+  '/work-types/bulk-update-parents',
+  adminOnly,
+  validate(BulkUpdateWorkTypeParentsSchema),
+  ctrl.bulkUpdateWorkTypeParents
+);
 router.put(
   '/work-types/:id',
   adminOnly,

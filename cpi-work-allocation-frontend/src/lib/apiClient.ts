@@ -114,6 +114,25 @@ export interface ApiSettingsSnapshot {
   }>;
 }
 
+export interface ApiGeneratedRule {
+  id: number;
+  keywords: string[];
+  category: string;
+  subCategory: string | null;
+  workType: string;
+  sortOrder: number;
+}
+
+export interface ApiSubCategoryClientsResult {
+  subCategory: { id: number; name: string };
+  generatedRules: ApiGeneratedRule[];
+}
+
+export interface ApiWorkTypeParentsResult {
+  workType: { id: number; name: string };
+  generatedRules: ApiGeneratedRule[];
+}
+
 // ---------------------------------------------------------------------------
 // Low-level fetch machinery
 // ---------------------------------------------------------------------------
@@ -466,17 +485,19 @@ const settings = {
   renameSubCategory: (id: number, name: string) =>
     put<{ id: number; name: string }>(`/api/settings/sub-categories/${id}`, { name }),
   setSubCategoryClients: (id: number, clients: string[]) =>
-    patch<{ id: number; name: string }>(`/api/settings/sub-categories/${id}/clients`, { clients }),
+    patch<ApiSubCategoryClientsResult>(`/api/settings/sub-categories/${id}/clients`, { clients }),
   deleteSubCategory: (id: number) =>
     del<void>(`/api/settings/sub-categories/${id}`),
 
   // Work types
   createWorkType: (name: string, parents: string[]) =>
-    post<{ id: number; name: string }>('/api/settings/work-types', { name, parents }),
+    post<{ workType: { id: number; name: string }; generatedRules: ApiGeneratedRule[] }>('/api/settings/work-types', { name, parents }),
   renameWorkType: (id: number, name: string) =>
     put<{ id: number; name: string }>(`/api/settings/work-types/${id}`, { name }),
   setWorkTypeParents: (id: number, parents: string[]) =>
-    patch<{ id: number; name: string }>(`/api/settings/work-types/${id}/parents`, { parents }),
+    patch<ApiWorkTypeParentsResult>(`/api/settings/work-types/${id}/parents`, { parents }),
+  bulkUpdateWorkTypeParents: (updates: Array<{ id: number; parents: string[] }>) =>
+    post<{ generatedRules: ApiGeneratedRule[] }>('/api/settings/work-types/bulk-update-parents', { updates }),
   deleteWorkType: (id: number) =>
     del<void>(`/api/settings/work-types/${id}`),
 

@@ -11,6 +11,7 @@ import {
   AddWorkTypeSchema,
   SetWorkTypeParentsSchema,
   BulkInferenceRulesSchema,
+  BulkUpdateWorkTypeParentsSchema,
   NumericIdParamSchema,
 } from 'cpi-work-allocation-shared';
 
@@ -179,13 +180,38 @@ export async function renameMainCategory(req: AuthRequest, res: Response): Promi
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   const body = getValid(req, RenameSchema);
   const cat = await prisma.$transaction(async (tx) => {
-    const updated = await tx.mainCategory.update({ where: { id }, data: { name: body.name } });
+    const existing = await tx.mainCategory.findUniqueOrThrow({ where: { id }, select: { name: true } });
+    const oldName = existing.name;
+
+    const updated = await tx.mainCategory.update({
+      where: { id },
+      data: { name: body.name },
+      include: { subCategories: true },
+    });
+
+    // Cascade rename into WorkType.parents (stored as String[] — no FK cascade)
+    const affectedWorkTypes = await tx.workType.findMany({ where: { parents: { has: oldName } } });
+    for (const wt of affectedWorkTypes) {
+      await tx.workType.update({
+        where: { id: wt.id },
+        data: { parents: wt.parents.map((p) => (p === oldName ? body.name : p)) },
+      });
+    }
+
+    // Phase 2: sync InferenceRule.category string to the new name.
+    // Keywords don't embed the main category name (they carry client/subCategory
+    // names), so only the classification field needs updating here.
+    await tx.inferenceRule.updateMany({
+      where: { category: oldName },
+      data: { category: body.name },
+    });
+
     await logAuditTx(tx, {
       userId: req.userId!,
       action: 'update',
       entity: 'MainCategory',
       entityId: String(updated.id),
-      payload: { name: updated.name },
+      payload: { name: updated.name, renamedFrom: oldName },
     });
     return updated;
   });
@@ -195,6 +221,36 @@ export async function renameMainCategory(req: AuthRequest, res: Response): Promi
 export async function deleteMainCategory(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   await prisma.$transaction(async (tx) => {
+    const existing = await tx.mainCategory.findUniqueOrThrow({
+      where: { id },
+      select: { name: true, subCategories: { select: { name: true } } },
+    });
+
+    // All parent names being wiped: the main category itself + every child sub-category.
+    // WorkType.parents is String[] (no FK), so stale names must be pruned manually.
+    // Leaving them in place would cause work types to appear "pre-attached" if a new
+    // category is ever created with the same name.
+    const removedParentNames = new Set([
+      existing.name,
+      ...existing.subCategories.map((sc) => sc.name),
+    ]);
+
+    const affectedWorkTypes = await tx.workType.findMany({
+      where: { parents: { hasSome: [...removedParentNames] } },
+    });
+
+    for (const wt of affectedWorkTypes) {
+      await tx.workType.update({
+        where: { id: wt.id },
+        data: { parents: wt.parents.filter((p) => !removedParentNames.has(p)) },
+      });
+    }
+
+    // Clean up pre-migration InferenceRules (subCategoryId = null) for this category.
+    // FK-linked rules cascade automatically:
+    //   MainCategory → SubCategory (Cascade) → InferenceRule (Cascade)
+    await tx.inferenceRule.deleteMany({ where: { category: existing.name, subCategoryId: null } });
+
     await tx.mainCategory.delete({ where: { id } });
     await logAuditTx(tx, {
       userId: req.userId!,
@@ -246,13 +302,41 @@ export async function renameSubCategory(req: AuthRequest, res: Response): Promis
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   const body = getValid(req, RenameSchema);
   const sub = await prisma.$transaction(async (tx) => {
+    const existing = await tx.subCategory.findUniqueOrThrow({ where: { id }, select: { name: true } });
+    const oldName = existing.name;
+
     const updated = await tx.subCategory.update({ where: { id }, data: { name: body.name } });
+
+    // Cascade rename into WorkType.parents (stored as String[] — no FK cascade)
+    const affectedWorkTypes = await tx.workType.findMany({ where: { parents: { has: oldName } } });
+    for (const wt of affectedWorkTypes) {
+      await tx.workType.update({
+        where: { id: wt.id },
+        data: { parents: wt.parents.map((p) => (p === oldName ? body.name : p)) },
+      });
+    }
+
+    // Phase 2: sync InferenceRule.subCategory and any keyword that carries the
+    // old sub-category name (auto-generated rules embed it as a keyword).
+    const affectedRules = await tx.inferenceRule.findMany({ where: { subCategory: oldName } });
+    for (const rule of affectedRules) {
+      await tx.inferenceRule.update({
+        where: { id: rule.id },
+        data: {
+          subCategory: body.name,
+          keywords: rule.keywords.map((k) =>
+            k === oldName.toLowerCase() ? body.name.toLowerCase() : k
+          ),
+        },
+      });
+    }
+
     await logAuditTx(tx, {
       userId: req.userId!,
       action: 'update',
       entity: 'SubCategory',
       entityId: String(updated.id),
-      payload: { name: updated.name },
+      payload: { name: updated.name, renamedFrom: oldName },
     });
     return updated;
   });
@@ -262,26 +346,104 @@ export async function renameSubCategory(req: AuthRequest, res: Response): Promis
 export async function setSubCategoryClients(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   const body = getValid(req, SetSubCategoryClientsSchema);
-  const sub = await prisma.$transaction(async (tx) => {
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Fetch existing state so we can diff for newly added clients.
+    const existing = await tx.subCategory.findUniqueOrThrow({
+      where: { id },
+      include: { mainCategory: { select: { name: true } } },
+    });
+
     const updated = await tx.subCategory.update({
       where: { id },
       data: { clients: body.clients },
     });
+
+    // Determine which clients are being added and removed in this call.
+    const prevSet = new Set(existing.clients);
+    const newClients = body.clients.filter((c) => !prevSet.has(c));
+    const removedClients = existing.clients.filter((c) => !body.clients.includes(c));
+
+    // Find work types whose parents include this sub-category.
+    const linkedWorkTypes = await tx.workType.findMany({
+      where: { parents: { has: existing.name } },
+    });
+
+    const generatedRules: Array<{
+      id: number; keywords: string[]; category: string;
+      subCategory: string | null; workType: string; sortOrder: number;
+    }> = [];
+
+    // Phase 3: delete InferenceRules for removed clients. The `keywords: { has }`
+    // filter targets rules whose keyword array contains the removed client name,
+    // scoped to this sub-category to avoid touching unrelated rules.
+    for (const client of removedClients) {
+      await tx.inferenceRule.deleteMany({
+        where: {
+          subCategory: existing.name,
+          keywords: { has: client.toLowerCase() },
+        },
+      });
+    }
+
+    // For every new client × every linked work type, auto-create an
+    // InferenceRule so the NLP parser can classify matching journal text.
+    // subCategoryId + workTypeId are populated so future deletes cascade at DB level.
+    for (const client of newClients) {
+      for (const wt of linkedWorkTypes) {
+        const rule = await tx.inferenceRule.create({
+          data: {
+            keywords: [client.toLowerCase(), existing.name.toLowerCase()],
+            category: existing.mainCategory.name,
+            subCategory: existing.name,
+            workType: wt.name,
+            sortOrder: 0,
+            subCategoryId: id,
+            workTypeId: wt.id,
+          },
+        });
+        generatedRules.push(rule);
+      }
+    }
+
     await logAuditTx(tx, {
       userId: req.userId!,
       action: 'update-clients',
       entity: 'SubCategory',
       entityId: String(updated.id),
-      payload: { clients: updated.clients },
+      payload: { clients: updated.clients, autoInferenceCount: generatedRules.length },
     });
-    return updated;
+
+    return { subCategory: updated, generatedRules };
   });
-  res.json(sub);
+
+  res.json(result);
 }
 
 export async function deleteSubCategory(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   await prisma.$transaction(async (tx) => {
+    const existing = await tx.subCategory.findUniqueOrThrow({ where: { id }, select: { name: true } });
+
+    // Prune this sub-category name from every WorkType that references it.
+    // WorkType.parents is String[] (no FK), so stale names must be removed manually.
+    // Leaving them causes work types to appear "pre-attached" if a new sub-category
+    // is created later with the same name.
+    const affectedWorkTypes = await tx.workType.findMany({
+      where: { parents: { has: existing.name } },
+    });
+
+    for (const wt of affectedWorkTypes) {
+      await tx.workType.update({
+        where: { id: wt.id },
+        data: { parents: wt.parents.filter((p) => p !== existing.name) },
+      });
+    }
+
+    // Clean up pre-migration rules (subCategoryId = null) by string.
+    // FK-linked rules cascade automatically via SubCategory → InferenceRule.
+    await tx.inferenceRule.deleteMany({ where: { subCategory: existing.name, subCategoryId: null } });
+
     await tx.subCategory.delete({ where: { id } });
     await logAuditTx(tx, {
       userId: req.userId!,
@@ -297,62 +459,223 @@ export async function deleteSubCategory(req: AuthRequest, res: Response): Promis
 
 export async function createWorkType(req: AuthRequest, res: Response): Promise<void> {
   const body = getValid(req, AddWorkTypeSchema);
-  const wt = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const created = await tx.workType.create({
       data: { name: body.name, parents: body.parents },
     });
+
+    const generatedRules: Array<{
+      id: number; keywords: string[]; category: string;
+      subCategory: string | null; workType: string; sortOrder: number;
+    }> = [];
+
+    for (const parentName of body.parents) {
+      const rule = await createRuleForParent(tx, created.id, created.name, parentName);
+      if (rule) generatedRules.push(rule);
+    }
+
     await logAuditTx(tx, {
       userId: req.userId!,
       action: 'create',
       entity: 'WorkType',
       entityId: String(created.id),
-      payload: { name: created.name, parents: created.parents },
+      payload: { name: created.name, parents: created.parents, autoInferenceCount: generatedRules.length },
     });
-    return created;
+
+    return { workType: created, generatedRules };
   });
-  res.status(201).json(wt);
+  res.status(201).json(result);
 }
 
 export async function renameWorkType(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   const body = getValid(req, RenameSchema);
   const wt = await prisma.$transaction(async (tx) => {
+    const existing = await tx.workType.findUniqueOrThrow({ where: { id }, select: { name: true } });
+    const oldName = existing.name;
+
     const updated = await tx.workType.update({ where: { id }, data: { name: body.name } });
+
+    // Phase 2: sync InferenceRule.workType and any keyword that carries the
+    // old work type name (auto-generated rules embed it as a keyword).
+    const affectedRules = await tx.inferenceRule.findMany({ where: { workType: oldName } });
+    for (const rule of affectedRules) {
+      await tx.inferenceRule.update({
+        where: { id: rule.id },
+        data: {
+          workType: body.name,
+          keywords: rule.keywords.map((k) =>
+            k === oldName.toLowerCase() ? body.name.toLowerCase() : k
+          ),
+        },
+      });
+    }
+
     await logAuditTx(tx, {
       userId: req.userId!,
       action: 'update',
       entity: 'WorkType',
       entityId: String(updated.id),
-      payload: { name: updated.name },
+      payload: { name: updated.name, renamedFrom: oldName },
     });
     return updated;
   });
   res.json(wt);
 }
 
+// ── Shared helper ───────────────────────────────────────────────────────────
+
+type TxClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/** Resolve a parent name (SubCategory OR MainCategory) and create one inference rule. Returns null if the name matches neither. */
+async function createRuleForParent(
+  tx: TxClient,
+  workTypeId: number,
+  workTypeName: string,
+  parentName: string,
+) {
+  const sub = await tx.subCategory.findFirst({
+    where: { name: parentName },
+    include: { mainCategory: { select: { name: true } } },
+  });
+  if (sub) {
+    return tx.inferenceRule.create({
+      data: {
+        keywords: [workTypeName.toLowerCase(), parentName.toLowerCase()],
+        category: sub.mainCategory.name,
+        subCategory: parentName,
+        workType: workTypeName,
+        sortOrder: 0,
+        subCategoryId: sub.id,
+        workTypeId,
+      },
+    });
+  }
+
+  const main = await tx.mainCategory.findFirst({ where: { name: parentName } });
+  if (!main) return null;
+
+  return tx.inferenceRule.create({
+    data: {
+      keywords: [workTypeName.toLowerCase(), parentName.toLowerCase()],
+      category: parentName,
+      subCategory: null,
+      workType: workTypeName,
+      sortOrder: 0,
+      workTypeId,
+    },
+  });
+}
+
+/** Delete auto-generated rules for a parent that was removed (handles both Sub and Main category parents). */
+async function deleteRulesForRemovedParent(
+  tx: TxClient,
+  workTypeName: string,
+  parentName: string,
+) {
+  await tx.inferenceRule.deleteMany({
+    where: { workType: workTypeName, subCategory: parentName },
+  });
+  await tx.inferenceRule.deleteMany({
+    where: { workType: workTypeName, category: parentName, subCategory: null },
+  });
+}
+
+// ── Work types ───────────────────────────────────────────────────────────────
+
 export async function setWorkTypeParents(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   const body = getValid(req, SetWorkTypeParentsSchema);
-  const wt = await prisma.$transaction(async (tx) => {
+
+  const result = await prisma.$transaction(async (tx) => {
+    const existing = await tx.workType.findUniqueOrThrow({ where: { id } });
+
     const updated = await tx.workType.update({
       where: { id },
       data: { parents: body.parents },
     });
+
+    // Determine which sub-category parents are being newly added or removed.
+    const prevSet = new Set(existing.parents);
+    const newParents = body.parents.filter((p) => !prevSet.has(p));
+    const removedParents = existing.parents.filter((p) => !body.parents.includes(p));
+
+    const generatedRules: Array<{
+      id: number; keywords: string[]; category: string;
+      subCategory: string | null; workType: string; sortOrder: number;
+    }> = [];
+
+    for (const parentName of removedParents) {
+      await deleteRulesForRemovedParent(tx, existing.name, parentName);
+    }
+
+    for (const parentName of newParents) {
+      const rule = await createRuleForParent(tx, id, existing.name, parentName);
+      if (rule) generatedRules.push(rule);
+    }
+
     await logAuditTx(tx, {
       userId: req.userId!,
       action: 'update-parents',
       entity: 'WorkType',
       entityId: String(updated.id),
-      payload: { parents: updated.parents },
+      payload: { parents: updated.parents, autoInferenceCount: generatedRules.length },
     });
-    return updated;
+
+    return { workType: updated, generatedRules };
   });
-  res.json(wt);
+
+  res.json(result);
+}
+
+export async function bulkUpdateWorkTypeParents(req: AuthRequest, res: Response): Promise<void> {
+  const body = getValid(req, BulkUpdateWorkTypeParentsSchema);
+
+  const generatedRules: Array<{
+    id: number; keywords: string[]; category: string;
+    subCategory: string | null; workType: string; sortOrder: number;
+  }> = [];
+
+  await prisma.$transaction(async (tx) => {
+    for (const { id, parents } of body.updates) {
+      const existing = await tx.workType.findUniqueOrThrow({ where: { id } });
+
+      await tx.workType.update({ where: { id }, data: { parents } });
+
+      const prevSet = new Set(existing.parents);
+      const newParents = parents.filter((p) => !prevSet.has(p));
+      const removedParents = existing.parents.filter((p) => !parents.includes(p));
+
+      for (const parentName of removedParents) {
+        await deleteRulesForRemovedParent(tx, existing.name, parentName);
+      }
+
+      for (const parentName of newParents) {
+        const rule = await createRuleForParent(tx, id, existing.name, parentName);
+        if (rule) generatedRules.push(rule);
+      }
+    }
+
+    await logAuditTx(tx, {
+      userId: req.userId!,
+      action: 'bulk-update-parents',
+      entity: 'WorkType',
+      entityId: 'bulk',
+      payload: { count: body.updates.length, autoInferenceCount: generatedRules.length },
+    });
+  });
+
+  res.json({ generatedRules });
 }
 
 export async function deleteWorkType(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   await prisma.$transaction(async (tx) => {
+    // Phase 1: clean up pre-migration rules (workTypeId = null) by string.
+    // Rules with workTypeId populated cascade automatically via the FK.
+    const existing = await tx.workType.findUniqueOrThrow({ where: { id }, select: { name: true } });
+    await tx.inferenceRule.deleteMany({ where: { workType: existing.name, workTypeId: null } });
+
     await tx.workType.delete({ where: { id } });
     await logAuditTx(tx, {
       userId: req.userId!,

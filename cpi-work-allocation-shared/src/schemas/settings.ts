@@ -41,6 +41,15 @@ export const BulkInferenceRulesSchema = z.object({
   rules: z.array(InferenceRuleSchema),
 });
 
+export const BulkUpdateWorkTypeParentsSchema = z.object({
+  updates: z.array(
+    z.object({
+      id: z.number().int(),
+      parents: z.array(z.string()).min(1),
+    }),
+  ).min(1),
+});
+
 export type AddNameInput = z.infer<typeof AddNameSchema>;
 export type RenameInput = z.infer<typeof RenameSchema>;
 export type AddSubCategoryInput = z.infer<typeof AddSubCategorySchema>;
@@ -51,3 +60,4 @@ export type AddWorkTypeInput = z.infer<typeof AddWorkTypeSchema>;
 export type SetWorkTypeParentsInput = z.infer<typeof SetWorkTypeParentsSchema>;
 export type InferenceRuleInput = z.infer<typeof InferenceRuleSchema>;
 export type BulkInferenceRulesInput = z.infer<typeof BulkInferenceRulesSchema>;
+export type BulkUpdateWorkTypeParentsInput = z.infer<typeof BulkUpdateWorkTypeParentsSchema>;

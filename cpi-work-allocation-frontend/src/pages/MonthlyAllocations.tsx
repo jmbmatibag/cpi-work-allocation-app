@@ -26,6 +26,7 @@ import { useClientsConfig } from "@/contexts/ClientsConfigContext";
 import { useEmployees } from "@/contexts/EmployeesContext";
 import { useNotifications } from "@/contexts/NotificationsContext";
 import { sumPercentages } from "@/lib/allocationMath";
+import WorkspaceTipModal from "@/components/WorkspaceTipModal";
 import {
   aggregateJournalEntries,
   formatAggregationAsPrompt,
@@ -240,6 +241,30 @@ const MonthlyAllocations = () => {
     :                               "bg-green-100 text-green-800";
 
   return (
+    <>
+    <WorkspaceTipModal
+      storageKey="hideMonthlyAllocationsTip"
+      title="How to use Monthly Work Allocations"
+      subtitle="Build a structured breakdown of how your month was spent — then submit it for manager review."
+      tips={[
+        {
+          heading: "Auto-generate from your journal",
+          body: "Click \"Generate from Journal\" to pull your Daily Journal entries for the selected month and pre-fill the allocation cards automatically.",
+        },
+        {
+          heading: "Edit allocation cards",
+          body: "Each card represents a Work Stream. Drag to reorder, click a card to expand it, and adjust percentages so the total reaches 100%.",
+        },
+        {
+          heading: "Select the work period",
+          body: "Use the month/year picker on the left sidebar to navigate between periods. Draft changes are saved automatically as you edit.",
+        },
+        {
+          heading: "Submit for review",
+          body: "When you are satisfied, click \"Submit for Review\". Your manager will be notified and can approve or return it with feedback.",
+        },
+      ]}
+    />
     <div className="flex h-[calc(100vh-3rem)]">
       <div className="w-[35%] bg-secondary/30 p-6 flex flex-col gap-6 overflow-y-auto border-r">
         {currentUser && (
@@ -359,6 +384,7 @@ const MonthlyAllocations = () => {
         </DialogContent>
       </Dialog>
     </div>
+    </>
   );
 };
 

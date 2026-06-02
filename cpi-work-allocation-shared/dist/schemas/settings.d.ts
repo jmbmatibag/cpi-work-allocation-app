@@ -38,6 +38,12 @@ export declare const BulkInferenceRulesSchema: z.ZodObject<{
         sortOrder: z.ZodDefault<z.ZodOptional<z.ZodNumber>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
+export declare const BulkUpdateWorkTypeParentsSchema: z.ZodObject<{
+    updates: z.ZodArray<z.ZodObject<{
+        id: z.ZodNumber;
+        parents: z.ZodArray<z.ZodString>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
 export type AddNameInput = z.infer<typeof AddNameSchema>;
 export type RenameInput = z.infer<typeof RenameSchema>;
 export type AddSubCategoryInput = z.infer<typeof AddSubCategorySchema>;
@@ -46,4 +52,5 @@ export type AddWorkTypeInput = z.infer<typeof AddWorkTypeSchema>;
 export type SetWorkTypeParentsInput = z.infer<typeof SetWorkTypeParentsSchema>;
 export type InferenceRuleInput = z.infer<typeof InferenceRuleSchema>;
 export type BulkInferenceRulesInput = z.infer<typeof BulkInferenceRulesSchema>;
+export type BulkUpdateWorkTypeParentsInput = z.infer<typeof BulkUpdateWorkTypeParentsSchema>;
 //# sourceMappingURL=settings.d.ts.map

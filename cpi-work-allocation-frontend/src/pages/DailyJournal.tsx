@@ -31,6 +31,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import WorkspaceTipModal from "@/components/WorkspaceTipModal";
 import {
   Save,
   BookOpen,
@@ -784,6 +785,35 @@ const DailyJournal = () => {
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
+    <>
+    <WorkspaceTipModal
+      storageKey="hideDailyLogTip"
+      title="How to use the Daily Journal"
+      subtitle="Log your work day as natural text — no forms, no timers."
+      note="You can view these tips at any time by clicking the 'Tips' button next to the Save Entry button."
+      tips={[
+        {
+          heading: "Use tagging shortcuts",
+          body: "To ensure the system understands your log clearly, use tagging shortcuts (e.g., @ClientName and #CategoryName) when logging a project or client.",
+        },
+        {
+          heading: "Timeline entries",
+          body: 'Start a line with a time like "9:17am @ClientName #CategoryName – description" to record a timed block. Use @ for clients and # for categories.',
+        },
+        {
+          heading: "Range entries",
+          body: 'Write "9:00am to 11:30am @Client #Category – task" to span a specific window. The engine converts it to a time block automatically.',
+        },
+        {
+          heading: "Multi-line continuation",
+          body: "Lines without a timestamp extend the previous timed block. Great for listing sub-tasks under one work window.",
+        },
+        {
+          heading: "Auto-inference",
+          body: "Unrecognised @tags and #tags are flagged with a warning badge. An admin can map them in Settings so future entries resolve correctly.",
+        },
+      ]}
+    />
     <div className="flex h-[calc(100vh-3rem)] overflow-hidden">
       {/* ── Left: Calendar sidebar ── */}
       <div className="w-[340px] border-r bg-secondary/30 p-6 flex flex-col gap-4 shrink-0">
@@ -1093,6 +1123,7 @@ const DailyJournal = () => {
         )}
       </div>
     </div>
+    </>
   );
 };
 

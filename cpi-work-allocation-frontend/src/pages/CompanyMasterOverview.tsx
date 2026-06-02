@@ -126,9 +126,11 @@ const CompanyMasterOverview = () => {
   // Manager dropdown — build from the union of seeded managers across
   // the period's records and the directory (so managers who supervise
   // teams with zero submissions still appear).
+  // Guard against empty strings: Radix Select crashes if any <SelectItem>
+  // receives value="" (reserved for the clear/placeholder state).
   const managersInScope = useMemo(() => {
     const names = new Set<string>();
-    for (const r of periodRecords) names.add(r.managerName);
+    for (const r of periodRecords) if (r.managerName) names.add(r.managerName);
     for (const u of allUsers) if (u.managerName) names.add(u.managerName);
     return Array.from(names).sort();
   }, [periodRecords, allUsers]);
@@ -136,9 +138,9 @@ const CompanyMasterOverview = () => {
   // Team dropdown — prefer the configured taxonomy but union in any
   // "unknown" teams that appear in records (data drift safety).
   const teamsInScope = useMemo(() => {
-    const s = new Set<string>(configuredTeams);
-    for (const r of periodRecords) s.add(r.team);
-    for (const u of allUsers) s.add(u.team);
+    const s = new Set<string>(configuredTeams.filter(Boolean));
+    for (const r of periodRecords) if (r.team) s.add(r.team);
+    for (const u of allUsers) if (u.team) s.add(u.team);
     return Array.from(s).sort();
   }, [configuredTeams, periodRecords, allUsers]);
 

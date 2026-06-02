@@ -29,7 +29,8 @@ const REFRESH_COOKIE = 'refresh_token';
 // Refresh cookie is scoped to the auth namespace so it's only sent on
 // /api/auth/* endpoints. Reduces exposure compared to path:'/'.
 const REFRESH_COOKIE_PATH = '/api/auth';
-const ACCESS_TTL_MS = 60 * 60 * 1000; // 1 hour
+const ACCESS_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours — tokens issued at login are always
+// expired before the next working day begins, regardless of overnight server restarts.
 const OTP_TTL_MS = 10 * 60 * 1000;
 const BCRYPT_ROUNDS = 12;
 const MAX_OTP_ATTEMPTS = 5;

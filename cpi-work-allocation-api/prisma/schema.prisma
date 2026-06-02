@@ -289,7 +289,8 @@ model SubCategory {
   clients          String[]
   sortOrder        Int    @default(0)
 
-  mainCategory MainCategory @relation(fields: [mainCategoryId], references: [id], onDelete: Cascade)
+  mainCategory   MainCategory  @relation(fields: [mainCategoryId], references: [id], onDelete: Cascade)
+  inferenceRules InferenceRule[]
 
   @@index([mainCategoryId])
 }
@@ -301,6 +302,8 @@ model WorkType {
   // Many-to-many via String[] avoids a polymorphic junction table; the names
   // are enforced at the application layer (same as the frontend).
   parents  String[]
+
+  inferenceRules InferenceRule[]
 }
 
 model InferenceRule {
@@ -310,4 +313,17 @@ model InferenceRule {
   subCategory String?
   workType    String
   sortOrder   Int      @default(0)
+
+  // Optional FK columns added for DB-level cascade delete. Nullable so all
+  // pre-migration rules remain valid; newly auto-generated rules populate both.
+  // Chain: MainCategory → SubCategory (Cascade) → InferenceRule (Cascade)
+  // so deleting a MainCategory wipes its InferenceRules two hops down.
+  subCategoryId Int?
+  workTypeId    Int?
+
+  subCategoryRef SubCategory? @relation(fields: [subCategoryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  workTypeRef    WorkType?    @relation(fields: [workTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([subCategoryId])
+  @@index([workTypeId])
 }
