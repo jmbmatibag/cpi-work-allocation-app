@@ -597,7 +597,7 @@ const TeamHub = () => {
                     "day-range-end bg-green-600 text-white hover:bg-green-600 hover:text-white",
                   day_range_middle:
                     "aria-selected:bg-green-100 aria-selected:text-green-900",
-                  day_today: "bg-green-50 text-green-900",
+                  day_today: "text-orange-500 font-black text-[15px]",
                   cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-green-100/50 [&:has([aria-selected])]:bg-green-100 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
                   day_outside:
                     "day-outside text-muted-foreground opacity-50 aria-selected:bg-green-100/50 aria-selected:text-green-900 aria-selected:opacity-30",
