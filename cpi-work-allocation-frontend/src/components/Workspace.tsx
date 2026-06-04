@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { Trash2, ChevronDown, ChevronRight, X, Sparkles, Flag } from "lucide-react";
+import { useState, useMemo, useRef, useCallback } from "react";
+import { Trash2, ChevronDown, ChevronRight, X, Flag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ import {
 } from "@/contexts/ClientsConfigContext";
 import { useAIConfig } from "@/contexts/AIConfigContext";
 import type { ActivityFlag } from "@/contexts/AllocationsContext";
+import { buildHighlightRegex, renderTagged } from "@/lib/tagHighlight";
 
 // Normalize a stored description for display or storage.
 //
@@ -130,6 +131,59 @@ interface WorkspaceProps {
    */
   flags?: Record<string, ActivityFlag>;
 }
+
+interface DescriptionFieldProps {
+  value: string;
+  onChange: (val: string) => void;
+}
+
+const DescriptionField = ({ value, onChange }: DescriptionFieldProps) => {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const { categories: mainCategories, subCategories } = useClientsConfig();
+
+  const highlightRegex = useMemo(() => {
+    const multiWord = [
+      ...mainCategories,
+      ...subCategories.map((s) => s.name),
+    ].filter((n) => n.includes(" "));
+    return buildHighlightRegex(multiWord);
+  }, [mainCategories, subCategories]);
+
+  const taggedContent = useMemo(
+    () => renderTagged(value, highlightRegex),
+    [value, highlightRegex],
+  );
+
+  const syncScroll = useCallback(() => {
+    const ta = textareaRef.current;
+    const bd = backdropRef.current;
+    if (!ta || !bd) return;
+    bd.scrollTop = ta.scrollTop;
+  }, []);
+
+  return (
+    <div className="relative rounded-md border border-input bg-background overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+      <div
+        ref={backdropRef}
+        aria-hidden="true"
+        className="absolute inset-0 px-3 py-2 text-sm leading-5 pointer-events-none select-none overflow-hidden text-foreground"
+        style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "break-word" }}
+      >
+        {taggedContent}
+      </div>
+      <Textarea
+        ref={textareaRef}
+        placeholder="Enter description..."
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onScroll={syncScroll}
+        className="relative min-h-[60px] resize-y text-sm border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+        style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
+      />
+    </div>
+  );
+};
 
 const Workspace = ({
   streams,
@@ -281,9 +335,10 @@ const Workspace = ({
       }
 
       if (result.tasks.length === 0) {
-        toast.error(
-          "Could not parse any tasks. Use format: - Task description - XX%",
-        );
+        toast.error("We couldn't detect your formatted tasks.", {
+          description:
+            "Please ensure your lines contain a task item followed by a percentage allocation (e.g., — Development task - 20%).",
+        });
         return;
       }
 
@@ -510,23 +565,27 @@ const Workspace = ({
     <div className="flex flex-col h-full relative">
       {showPrompt ? (
         <div className="flex flex-col h-full">
-          {showAutoGenerate && onAutoGenerate && (
-            <div className="mb-4">
-              <Button
-                variant="outline"
-                className="w-full gap-2 border-primary/30 text-primary hover:bg-primary/5 shadow-sm shadow-primary/10"
-                onClick={onAutoGenerate}
-              >
-                <Sparkles className="h-4 w-4" />
-                ✨ Auto-Generate from Monthly Journal
-              </Button>
-            </div>
-          )}
           <AIPromptBox
             onSubmit={handleAISubmit}
             isProcessing={aiPending}
             minimized={false}
             initialText={promptText}
+            headerSlot={showAutoGenerate && onAutoGenerate ? (
+              <>
+                <Button
+                  variant="outline"
+                  className="w-full gap-2 border-primary/30 text-primary hover:bg-primary/5 hover:text-primary shadow-sm shadow-primary/10"
+                  onClick={onAutoGenerate}
+                >
+                  Auto-Generate from Daily Journal
+                </Button>
+                <div className="flex items-center justify-center gap-4 my-4">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-xs font-medium text-muted-foreground/60 uppercase tracking-wider">or</span>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+              </>
+            ) : undefined}
           />
         </div>
       ) : (
@@ -927,13 +986,9 @@ const Workspace = ({
                                     <label className="text-xs font-medium text-muted-foreground">
                                       Description
                                     </label>
-                                    <Textarea
-                                      placeholder="Enter description..."
+                                    <DescriptionField
                                       value={normalizeDescription(activity.description, activity.client)}
-                                      onChange={(e) =>
-                                        updateActivity(sIdx, aIdx, "description", e.target.value)
-                                      }
-                                      className="min-h-[60px] resize-y text-sm"
+                                      onChange={(val) => updateActivity(sIdx, aIdx, "description", val)}
                                     />
                                   </div>
                                 </div>

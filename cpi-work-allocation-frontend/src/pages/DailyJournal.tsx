@@ -32,6 +32,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import WorkspaceTipModal from "@/components/WorkspaceTipModal";
+import { buildHighlightRegex, renderTagged } from "@/lib/tagHighlight";
 import {
   Save,
   BookOpen,
@@ -177,6 +178,7 @@ function SmartJournalLine({
   onDelete,
 }: SmartJournalLineProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const backdropRef = useRef<HTMLDivElement>(null);
   const [caret, setCaret] = useState(0);
   const [caretPixels, setCaretPixels] = useState<{
     top: number;
@@ -184,6 +186,19 @@ function SmartJournalLine({
     lineHeight: number;
   } | null>(null);
   const measureCaret = useCaretPosition();
+
+  // Highlight backdrop — build taxonomy-aware regex from the tagItems prop so
+  // multi-word names like "#Quick Policy" are matched as a single token.
+  // Skip rendering when the line is invalid (red text) or time-only (mono font)
+  // so those states keep their own visual treatment.
+  const highlightRegex = useMemo(
+    () => buildHighlightRegex(tagItems.filter((i) => i.value.includes(" ")).map((i) => i.value)),
+    [tagItems],
+  );
+  const taggedContent = useMemo(
+    () => renderTagged(text, highlightRegex),
+    [text, highlightRegex],
+  );
 
   useLayoutEffect(() => {
     if (autoFocus && textareaRef.current) {
@@ -330,36 +345,59 @@ function SmartJournalLine({
             above re-runs whenever `text` changes externally (e.g. on
             load) so long pre-filled entries are never clipped.
           */}
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            onSelect={syncCaret}
-            onClick={syncCaret}
-            rows={2}
-            placeholder={
-              lineIndex === 0
-                ? "9:17am @CLIENT #category What you worked on…"
-                : "Continue your log…"
-            }
-            aria-invalid={isInvalid}
-            className={cn(
-              "flex-1 resize-none bg-transparent border-0 px-0 py-2.5 text-sm leading-6",
-              "focus:outline-none focus:ring-0 focus-visible:ring-0",
-              "placeholder:text-muted-foreground/30 overflow-hidden",
-              isTimeOnly && "text-muted-foreground font-mono text-xs",
-              // Slightly muted destructive so red text doesn't fight
-              // with the chip + message; full opacity feels alarming.
-              isInvalid && "text-destructive/85",
+          {/* Wrap textarea + backdrop in a relative container so the
+              absolute backdrop is clipped to the textarea's bounds. */}
+          <div className="relative flex-1">
+            {/* Highlight backdrop — visible only on normal (non-invalid,
+                non-time-only) lines. Must match textarea padding exactly. */}
+            {!isInvalid && !isTimeOnly && (
+              <div
+                ref={backdropRef}
+                aria-hidden="true"
+                className="absolute inset-0 px-0 py-2.5 text-sm leading-6 pointer-events-none select-none overflow-hidden text-foreground"
+                style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", overflowWrap: "break-word" }}
+              >
+                {taggedContent}
+              </div>
             )}
-            style={{ minHeight: "52px", height: "auto" }}
-            onInput={(e) => {
-              const ta = e.currentTarget;
-              ta.style.height = "auto";
-              ta.style.height = `${ta.scrollHeight}px`;
-            }}
-          />
+
+            <textarea
+              ref={textareaRef}
+              value={text}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onSelect={syncCaret}
+              onClick={syncCaret}
+              rows={2}
+              placeholder={
+                lineIndex === 0
+                  ? "9:17am @CLIENT #category What you worked on…"
+                  : "Continue your log…"
+              }
+              aria-invalid={isInvalid}
+              className={cn(
+                "w-full resize-none bg-transparent border-0 px-0 py-2.5 text-sm leading-6",
+                "focus:outline-none focus:ring-0 focus-visible:ring-0",
+                "placeholder:text-muted-foreground/30 overflow-hidden",
+                isTimeOnly && "text-muted-foreground font-mono text-xs",
+                isInvalid && "text-destructive/85",
+              )}
+              style={{
+                minHeight: "52px",
+                height: "auto",
+                // Transparent text lets the backdrop highlights show through.
+                // Skip for invalid/time-only lines that have their own colour.
+                ...(!isInvalid && !isTimeOnly
+                  ? { color: "transparent", caretColor: "hsl(var(--foreground))" }
+                  : {}),
+              }}
+              onInput={(e) => {
+                const ta = e.currentTarget;
+                ta.style.height = "auto";
+                ta.style.height = `${ta.scrollHeight}px`;
+              }}
+            />
+          </div>
 
           {/*
             Right-side status slot. When invalid we REPLACE the duration

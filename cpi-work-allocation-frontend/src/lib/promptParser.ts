@@ -518,7 +518,10 @@ function refineWorkTypeForParent(
   });
   if (similar) return similar;
 
-  return fallbackWorkType;
+  // No keyword evidence maps to a valid work type under this parent.
+  // Return empty so the dropdown shows unselected — the user must
+  // choose explicitly rather than receive an arbitrary default.
+  return "";
 }
 
 // =====================================================================

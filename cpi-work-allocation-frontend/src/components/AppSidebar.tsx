@@ -116,7 +116,7 @@ const AppSidebar = () => {
           <Button
             variant="ghost"
             size={collapsed ? "icon" : "sm"}
-            className="w-full justify-start text-muted-foreground hover:text-foreground"
+            className="w-full justify-start text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
             onClick={() => setChangePwOpen(true)}
           >
             <KeyRound className="h-4 w-4" />

@@ -249,7 +249,7 @@ const MonthlyAllocations = () => {
       tips={[
         {
           heading: "Auto-generate from your journal",
-          body: "Click \"Generate from Journal\" to pull your Daily Journal entries for the selected month and pre-fill the allocation cards automatically.",
+          body: "Click \"Auto-Generate from Daily Journal\" to pull your Daily Journal entries for the selected month and pre-fill the allocation cards automatically.",
         },
         {
           heading: "Edit allocation cards",
@@ -264,6 +264,7 @@ const MonthlyAllocations = () => {
           body: "When you are satisfied, click \"Submit for Review\". Your manager will be notified and can approve or return it with feedback.",
         },
       ]}
+      note={'A permanent Formatting Guide is available directly on the entry screen — look for the (!) info icon next to the "Enter Work Allocation Manually" heading to open it at any time.'}
     />
     <div className="flex h-[calc(100vh-3rem)]">
       <div className="w-[35%] bg-secondary/30 p-6 flex flex-col gap-6 overflow-y-auto border-r">
