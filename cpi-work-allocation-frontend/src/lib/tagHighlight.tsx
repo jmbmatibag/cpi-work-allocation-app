@@ -54,13 +54,20 @@ export function renderTagged(text: string, re: RegExp): ReactNode {
       nodes.push(<span key={k++}>{text.slice(last, m.index)}</span>);
     }
     const isAt = m[1][0] === "@";
+    // box-shadow spreads the background 3px left/right without adding to the
+    // element's layout width — keeping backdrop characters pixel-aligned with
+    // the textarea so the caret stays in the correct visual position.
+    const shadow = isAt
+      ? "3px 0 0 rgb(187 247 208 / 0.6), -3px 0 0 rgb(187 247 208 / 0.6)"
+      : "3px 0 0 rgb(254 215 170 / 0.6), -3px 0 0 rgb(254 215 170 / 0.6)";
     nodes.push(
       <mark
         key={k++}
         className={cn(
-          "rounded-[3px] not-italic px-1",
+          "rounded-[3px] not-italic",
           isAt ? "bg-green-200/60" : "bg-orange-200/60",
         )}
+        style={{ boxShadow: shadow }}
       >
         {m[1]}
       </mark>,

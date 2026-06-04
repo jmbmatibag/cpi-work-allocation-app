@@ -444,6 +444,33 @@ export function matchClient(
 }
 
 /**
+ * When a #Category tag is explicitly present, narrow the inference rule set
+ * to only rules belonging to that category (and, when a sub-category is
+ * resolved, rules scoped to that sub-category or the main-category level).
+ *
+ * This prevents cross-category keyword pollution: "development" logged under
+ * "#Cloud Infra" no longer accidentally matches a "Projects/Development" rule.
+ *
+ * Falls back to the full rule set when no scoped rules exist (e.g. the
+ * category is brand-new and has no auto-generated rules yet).
+ */
+function scopeRulesToCategory(
+  rules: readonly InferenceRule[],
+  category: string,
+  subCategory: string | null,
+): readonly InferenceRule[] {
+  const catLower = category.toLowerCase();
+  const subLower = subCategory?.toLowerCase() ?? null;
+  const scoped = rules.filter((r) => {
+    if (r.category.toLowerCase() !== catLower) return false;
+    if (subLower === null) return true;
+    // Include sub-category-specific rules AND main-category-level rules (subCategory = null/undefined)
+    return !r.subCategory || r.subCategory.toLowerCase() === subLower;
+  });
+  return scoped.length > 0 ? scoped : rules;
+}
+
+/**
  * Pick the best work type for a tag-resolved activity, using the
  * description's keywords to refine beyond the parent's static
  * default.
@@ -728,7 +755,7 @@ export function parseWorkAllocation(
             `${headerText} ${bulletLines.join(" ")}`,
             subCategory ?? workCategory,
             resolved.workType,
-            inferenceRules,
+            scopeRulesToCategory(inferenceRules, resolved.category, resolved.subCategory),
             taxonomy,
           );
         } else {
@@ -836,7 +863,7 @@ export function parseWorkAllocation(
           description,
           subCategory ?? workCategory,
           resolved.workType,
-          inferenceRules,
+          scopeRulesToCategory(inferenceRules, resolved.category, resolved.subCategory),
           taxonomy,
         );
       } else {

@@ -15,6 +15,31 @@ import {
   NumericIdParamSchema,
 } from 'cpi-work-allocation-shared';
 
+// ── Name sanitization ────────────────────────────────────────────────────────
+
+/** Collapse interior whitespace and strip leading/trailing spaces from a taxonomy name. */
+function sanitizeName(name: string): string {
+  return name.replace(/\s+/g, ' ').trim();
+}
+
+const STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'at', 'by', 'for', 'in', 'is', 'of', 'on', 'or', 'the', 'to', 'with',
+]);
+
+/**
+ * Produce a keyword array for a work type name.
+ * Multi-word names get the full phrase PLUS each individual non-stop-word token.
+ *
+ * "Product Development"  → ["product development", "product", "development"]
+ * "Development"          → ["development"]
+ */
+function tokenizeWorkTypeName(name: string): string[] {
+  const lower = name.toLowerCase();
+  if (!name.includes(' ')) return [lower];
+  const words = lower.split(/\s+/).filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+  return [...new Set([lower, ...words])];
+}
+
 // ── Snapshot ────────────────────────────────────────────────────────────────
 
 export async function snapshot(_req: Request, res: Response): Promise<void> {
@@ -162,7 +187,7 @@ export async function createMainCategory(req: AuthRequest, res: Response): Promi
   const body = getValid(req, AddNameSchema);
   const cat = await prisma.$transaction(async (tx) => {
     const created = await tx.mainCategory.create({
-      data: { name: body.name, sortOrder: body.sortOrder },
+      data: { name: sanitizeName(body.name), sortOrder: body.sortOrder },
     });
     await logAuditTx(tx, {
       userId: req.userId!,
@@ -179,13 +204,14 @@ export async function createMainCategory(req: AuthRequest, res: Response): Promi
 export async function renameMainCategory(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   const body = getValid(req, RenameSchema);
+  const newName = sanitizeName(body.name);
   const cat = await prisma.$transaction(async (tx) => {
     const existing = await tx.mainCategory.findUniqueOrThrow({ where: { id }, select: { name: true } });
     const oldName = existing.name;
 
     const updated = await tx.mainCategory.update({
       where: { id },
-      data: { name: body.name },
+      data: { name: newName },
       include: { subCategories: true },
     });
 
@@ -194,7 +220,7 @@ export async function renameMainCategory(req: AuthRequest, res: Response): Promi
     for (const wt of affectedWorkTypes) {
       await tx.workType.update({
         where: { id: wt.id },
-        data: { parents: wt.parents.map((p) => (p === oldName ? body.name : p)) },
+        data: { parents: wt.parents.map((p) => (p === oldName ? newName : p)) },
       });
     }
 
@@ -203,7 +229,7 @@ export async function renameMainCategory(req: AuthRequest, res: Response): Promi
     // names), so only the classification field needs updating here.
     await tx.inferenceRule.updateMany({
       where: { category: oldName },
-      data: { category: body.name },
+      data: { category: newName },
     });
 
     await logAuditTx(tx, {
@@ -276,7 +302,7 @@ export async function createSubCategory(req: AuthRequest, res: Response): Promis
   const sub = await prisma.$transaction(async (tx) => {
     const created = await tx.subCategory.create({
       data: {
-        name: body.name,
+        name: sanitizeName(body.name),
         mainCategoryId: body.parentMainCategoryId,
         clients: body.clients,
         sortOrder: body.sortOrder,
@@ -301,18 +327,19 @@ export async function createSubCategory(req: AuthRequest, res: Response): Promis
 export async function renameSubCategory(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   const body = getValid(req, RenameSchema);
+  const newName = sanitizeName(body.name);
   const sub = await prisma.$transaction(async (tx) => {
     const existing = await tx.subCategory.findUniqueOrThrow({ where: { id }, select: { name: true } });
     const oldName = existing.name;
 
-    const updated = await tx.subCategory.update({ where: { id }, data: { name: body.name } });
+    const updated = await tx.subCategory.update({ where: { id }, data: { name: newName } });
 
     // Cascade rename into WorkType.parents (stored as String[] — no FK cascade)
     const affectedWorkTypes = await tx.workType.findMany({ where: { parents: { has: oldName } } });
     for (const wt of affectedWorkTypes) {
       await tx.workType.update({
         where: { id: wt.id },
-        data: { parents: wt.parents.map((p) => (p === oldName ? body.name : p)) },
+        data: { parents: wt.parents.map((p) => (p === oldName ? newName : p)) },
       });
     }
 
@@ -323,9 +350,9 @@ export async function renameSubCategory(req: AuthRequest, res: Response): Promis
       await tx.inferenceRule.update({
         where: { id: rule.id },
         data: {
-          subCategory: body.name,
+          subCategory: newName,
           keywords: rule.keywords.map((k) =>
-            k === oldName.toLowerCase() ? body.name.toLowerCase() : k
+            k === oldName.toLowerCase() ? newName.toLowerCase() : k
           ),
         },
       });
@@ -461,7 +488,7 @@ export async function createWorkType(req: AuthRequest, res: Response): Promise<v
   const body = getValid(req, AddWorkTypeSchema);
   const result = await prisma.$transaction(async (tx) => {
     const created = await tx.workType.create({
-      data: { name: body.name, parents: body.parents },
+      data: { name: sanitizeName(body.name), parents: body.parents },
     });
 
     const generatedRules: Array<{
@@ -490,23 +517,25 @@ export async function createWorkType(req: AuthRequest, res: Response): Promise<v
 export async function renameWorkType(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   const body = getValid(req, RenameSchema);
+  const newName = sanitizeName(body.name);
   const wt = await prisma.$transaction(async (tx) => {
     const existing = await tx.workType.findUniqueOrThrow({ where: { id }, select: { name: true } });
     const oldName = existing.name;
 
-    const updated = await tx.workType.update({ where: { id }, data: { name: body.name } });
+    const updated = await tx.workType.update({ where: { id }, data: { name: newName } });
 
-    // Phase 2: sync InferenceRule.workType and any keyword that carries the
-    // old work type name (auto-generated rules embed it as a keyword).
+    // Sync InferenceRule.workType and rebuild the tokenized keyword set.
+    // Old tokens (full name + individual words) are removed; new tokens are
+    // prepended. Non-work-type keywords (parent names, client codes) are kept.
+    const oldTokens = new Set(tokenizeWorkTypeName(oldName));
+    const newTokens = tokenizeWorkTypeName(newName);
     const affectedRules = await tx.inferenceRule.findMany({ where: { workType: oldName } });
     for (const rule of affectedRules) {
       await tx.inferenceRule.update({
         where: { id: rule.id },
         data: {
-          workType: body.name,
-          keywords: rule.keywords.map((k) =>
-            k === oldName.toLowerCase() ? body.name.toLowerCase() : k
-          ),
+          workType: newName,
+          keywords: [...newTokens, ...rule.keywords.filter((k) => !oldTokens.has(k))],
         },
       });
     }
@@ -541,7 +570,7 @@ async function createRuleForParent(
   if (sub) {
     return tx.inferenceRule.create({
       data: {
-        keywords: [workTypeName.toLowerCase(), parentName.toLowerCase()],
+        keywords: [...tokenizeWorkTypeName(workTypeName), parentName.toLowerCase()],
         category: sub.mainCategory.name,
         subCategory: parentName,
         workType: workTypeName,
@@ -557,7 +586,7 @@ async function createRuleForParent(
 
   return tx.inferenceRule.create({
     data: {
-      keywords: [workTypeName.toLowerCase(), parentName.toLowerCase()],
+      keywords: [...tokenizeWorkTypeName(workTypeName), parentName.toLowerCase()],
       category: parentName,
       subCategory: null,
       workType: workTypeName,
