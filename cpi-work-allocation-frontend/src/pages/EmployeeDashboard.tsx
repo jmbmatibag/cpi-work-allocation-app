@@ -95,9 +95,9 @@ const RoundedTooltip = ({ active, payload, label }: RoundedTooltipProps) => {
 const statusBadgeClass = (s: AllocationStatus): string => {
   switch (s) {
     case "Draft":          return "bg-muted text-muted-foreground";
-    case "Pending Review": return "bg-amber-100 text-amber-800";
-    case "Needs Revision": return "bg-orange-100 text-orange-800";
-    case "Approved":       return "bg-green-100 text-green-800";
+    case "Pending Review": return "bg-warning/10 text-warning";
+    case "Needs Revision": return "bg-destructive/10 text-destructive";
+    case "Approved":       return "bg-success/10 text-success";
   }
 };
 
@@ -166,7 +166,7 @@ const AllocationTrendChart = memo(function AllocationTrendChart({
           <span
             className="relative inline-flex h-4 w-7 rounded-full transition-colors"
             style={{
-              background: drillDown ? "hsl(224 72% 45%)" : "hsl(220 13% 85%)",
+              background: drillDown ? "hsl(var(--primary))" : "hsl(220 13% 85%)",
             }}
           >
             <span
@@ -414,19 +414,19 @@ const EmployeeDashboard = () => {
           MonthlyAllocations with ?month=&year= so clicking lands
           them on the exact period. */}
       {needsRevision.length > 0 && (
-        <Card className="border-orange-200 bg-orange-50/40">
+        <Card className="border-destructive/20 bg-destructive/5">
           <CardHeader className="pb-2">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
-                <AlertTriangle className="h-4 w-4 text-orange-700" />
+              <div className="w-8 h-8 rounded-lg bg-destructive/10 flex items-center justify-center shrink-0">
+                <AlertTriangle className="h-4 w-4 text-destructive" />
               </div>
               <div>
-                <CardTitle className="text-base text-orange-900">
+                <CardTitle className="text-base text-destructive">
                   {needsRevision.length === 1
                     ? "1 allocation needs your revision"
                     : `${needsRevision.length} allocations need your revision`}
                 </CardTitle>
-                <p className="text-xs text-orange-800/80 mt-0.5">
+                <p className="text-xs text-destructive/80 mt-0.5">
                   Your manager returned {needsRevision.length === 1 ? "this" : "these"} for edits. Open to see flagged cards and resubmit.
                 </p>
               </div>
@@ -438,7 +438,7 @@ const EmployeeDashboard = () => {
               return (
                 <div
                   key={record.id}
-                  className="flex items-start justify-between gap-3 rounded-lg bg-card border border-orange-200 p-3"
+                  className="flex items-start justify-between gap-3 rounded-lg bg-card border border-destructive/20 p-3"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -448,7 +448,7 @@ const EmployeeDashboard = () => {
                       {flagCount > 0 && (
                         <Badge
                           variant="outline"
-                          className="h-5 text-[10px] gap-1 border-orange-300 bg-orange-50 text-orange-700"
+                          className="h-5 text-[10px] gap-1 border-destructive/30 bg-destructive/10 text-destructive"
                         >
                           <Flag className="h-2.5 w-2.5" />
                           {flagCount} flagged
@@ -461,7 +461,7 @@ const EmployeeDashboard = () => {
                       )}
                     </div>
                     {record.feedback && (
-                      <p className="text-xs text-orange-900/80 mt-1.5 line-clamp-2">
+                      <p className="text-xs text-foreground/80 mt-1.5 line-clamp-2">
                         <span className="font-medium">Manager's note:</span>{" "}
                         {record.feedback}
                       </p>
@@ -470,7 +470,7 @@ const EmployeeDashboard = () => {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="gap-1 border-orange-300 text-orange-800 hover:bg-orange-100 shrink-0"
+                    className="gap-1 border-destructive/30 text-destructive hover:bg-destructive/10 shrink-0"
                     onClick={() =>
                       navigate(
                         `/allocations?month=${encodeURIComponent(record.month)}&year=${encodeURIComponent(record.year)}`,
@@ -550,7 +550,7 @@ const EmployeeDashboard = () => {
           <CardContent>
             {lastApproved ? (
               <>
-                <p className="text-3xl font-bold text-green-600 tabular-nums">100%</p>
+                <p className="text-3xl font-bold text-success tabular-nums">100%</p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {lastApproved.month} {lastApproved.year} — Approved
                 </p>
@@ -591,9 +591,9 @@ const EmployeeDashboard = () => {
               <>
                 <div className="flex items-start gap-2">
                   {insight.delta >= 0 ? (
-                    <TrendingUp className="h-4 w-4 text-green-600 mt-0.5 shrink-0" />
+                    <TrendingUp className="h-4 w-4 text-success mt-0.5 shrink-0" />
                   ) : (
-                    <TrendingDown className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+                    <TrendingDown className="h-4 w-4 text-warning mt-0.5 shrink-0" />
                   )}
                   <p className="text-foreground leading-relaxed">
                     <span className="font-semibold">Analysis:</span> Your focus

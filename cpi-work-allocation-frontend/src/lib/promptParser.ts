@@ -436,9 +436,9 @@ export function matchClient(
   knownClients: readonly string[] = [],
   fallback = "N/A",
 ): string {
-  const upper = text.toUpperCase();
+  const lower = text.toLowerCase();
   for (const client of knownClients) {
-    if (upper.includes(client.toUpperCase())) return client;
+    if (lower.includes(client.toLowerCase())) return client;
   }
   return fallback;
 }
@@ -707,7 +707,8 @@ export function parseWorkAllocation(
         const clientTagMatch = headerText.match(/(?<![A-Za-z0-9])@([A-Za-z][A-Za-z0-9_-]*)/);
         let client: string;
         if (clientTagMatch) {
-          client = clientTagMatch[1].toUpperCase();
+          const rawTag = clientTagMatch[1];
+          client = knownClients.find(c => c.toLowerCase() === rawTag.toLowerCase()) ?? rawTag;
         } else {
           const matched = matchClient(headerText, knownClients, fallbackClient);
           if (matched !== fallbackClient) {
@@ -886,7 +887,7 @@ export function parseWorkAllocation(
         /(?<![A-Za-z0-9])@([A-Za-z][A-Za-z0-9_-]*)/,
       );
       const client = explicitClientTag
-        ? explicitClientTag[1].toUpperCase()
+        ? (knownClients.find(c => c.toLowerCase() === explicitClientTag[1].toLowerCase()) ?? explicitClientTag[1])
         : matchClient(description, knownClients, fallbackClient);
 
       // ── Scenario A: Project-Client fan-out (simple line) ───────────────

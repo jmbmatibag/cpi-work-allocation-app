@@ -79,9 +79,9 @@ type MasterRow =
 const statusBadgeClass = (s: AllocationStatus): string => {
   switch (s) {
     case "Draft":          return "bg-muted text-muted-foreground";
-    case "Pending Review": return "bg-amber-100 text-amber-800";
-    case "Needs Revision": return "bg-orange-100 text-orange-800";
-    case "Approved":       return "bg-green-100 text-green-800";
+    case "Pending Review": return "bg-warning/10 text-warning";
+    case "Needs Revision": return "bg-destructive/10 text-destructive";
+    case "Approved":       return "bg-success/10 text-success";
   }
 };
 
@@ -401,7 +401,7 @@ const CompanyMasterOverview = () => {
             <CardTitle className="text-sm text-muted-foreground">Approved</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-green-600">
+            <p className="text-3xl font-bold text-success">
               {kpis.approved} <span className="text-base text-muted-foreground font-normal">/ {kpis.totalEmployees}</span>
             </p>
           </CardContent>
@@ -411,7 +411,7 @@ const CompanyMasterOverview = () => {
             <CardTitle className="text-sm text-muted-foreground">Pending Review</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold text-amber-600">{kpis.pending}</p>
+            <p className="text-3xl font-bold text-warning">{kpis.pending}</p>
           </CardContent>
         </Card>
         <Card>
@@ -567,8 +567,8 @@ const CompanyMasterOverview = () => {
                           <span
                             className="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wider"
                             style={{
-                              background: "hsl(224 72% 95%)",
-                              color: "hsl(224 72% 35%)",
+                              background: "hsl(var(--primary-pastel))",
+                              color: "hsl(var(--primary))",
                               letterSpacing: "0.03em",
                             }}
                           >

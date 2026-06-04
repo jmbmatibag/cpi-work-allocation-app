@@ -88,9 +88,9 @@ const MONTHS = [
 
 const statusColor: Record<AllocationStatus, string> = {
   Draft: "bg-muted text-muted-foreground",
-  "Pending Review": "bg-amber-100 text-amber-800",
-  Approved: "bg-green-100 text-green-800",
-  "Needs Revision": "bg-orange-100 text-orange-800",
+  "Pending Review": "bg-warning/10 text-warning",
+  Approved: "bg-success/10 text-success",
+  "Needs Revision": "bg-destructive/10 text-destructive",
 };
 
 // --- Submissions table data-grid types & helpers ---------------------
@@ -590,17 +590,17 @@ const TeamHub = () => {
                 initialFocus
                 classNames={{
                   day_selected:
-                    "bg-green-600 text-white hover:bg-green-600 hover:text-white focus:bg-green-600 focus:text-white",
+                    "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
                   day_range_start:
-                    "day-range-start bg-green-600 text-white hover:bg-green-600 hover:text-white",
+                    "day-range-start bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
                   day_range_end:
-                    "day-range-end bg-green-600 text-white hover:bg-green-600 hover:text-white",
+                    "day-range-end bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
                   day_range_middle:
-                    "aria-selected:bg-green-100 aria-selected:text-green-900",
-                  day_today: "text-orange-500 font-black text-[15px]",
-                  cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-green-100/50 [&:has([aria-selected])]:bg-green-100 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
+                    "aria-selected:bg-primary/10 aria-selected:text-primary",
+                  day_today: "text-warning font-black text-[15px]",
+                  cell: "h-9 w-9 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-primary/5 [&:has([aria-selected])]:bg-primary/10 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
                   day_outside:
-                    "day-outside text-muted-foreground opacity-50 aria-selected:bg-green-100/50 aria-selected:text-green-900 aria-selected:opacity-30",
+                    "day-outside text-muted-foreground opacity-50 aria-selected:bg-primary/5 aria-selected:text-primary aria-selected:opacity-30",
                 }}
               />
               <div className="border-t p-3 flex items-center justify-between gap-3 flex-wrap">
@@ -631,7 +631,6 @@ const TeamHub = () => {
                   </Button>
                   <Button
                     size="sm"
-                    className="bg-amber-500 hover:bg-amber-600 text-white"
                     onClick={() => {
                       setDateRange(pendingRange?.from ? pendingRange : undefined);
                       setDatePickerOpen(false);
@@ -726,27 +725,27 @@ const TeamHub = () => {
           <CardContent className="flex items-center justify-between pt-6">
             <div>
               <p className="text-sm text-muted-foreground">Pending Review</p>
-              <p className="text-3xl font-bold text-amber-600">{pendingCount}</p>
+              <p className="text-3xl font-bold text-warning">{pendingCount}</p>
             </div>
-            <Clock className="h-8 w-8 text-amber-600/40" />
+            <Clock className="h-8 w-8 text-warning/40" />
           </CardContent>
         </Card>
         <Card>
           <CardContent className="flex items-center justify-between pt-6">
             <div>
               <p className="text-sm text-muted-foreground">Approved</p>
-              <p className="text-3xl font-bold text-green-600">{approvedCount}</p>
+              <p className="text-3xl font-bold text-success">{approvedCount}</p>
             </div>
-            <CheckCircle2 className="h-8 w-8 text-green-600/40" />
+            <CheckCircle2 className="h-8 w-8 text-success/40" />
           </CardContent>
         </Card>
         <Card>
           <CardContent className="flex items-center justify-between pt-6">
             <div>
               <p className="text-sm text-muted-foreground">Needs Revision</p>
-              <p className="text-3xl font-bold text-orange-600">{revisionCount}</p>
+              <p className="text-3xl font-bold text-destructive">{revisionCount}</p>
             </div>
-            <AlertTriangle className="h-8 w-8 text-orange-600/40" />
+            <AlertTriangle className="h-8 w-8 text-destructive/40" />
           </CardContent>
         </Card>
       </div>
@@ -1108,7 +1107,7 @@ const TeamHub = () => {
                     {flagCount > 0 && !isEditing && (
                       <Badge
                         variant="outline"
-                        className="text-orange-700 border-orange-300 bg-orange-50"
+                        className="text-warning border-warning/40 bg-warning/10"
                       >
                         <Flag className="h-3 w-3 mr-1" />
                         {flagCount} flagged
@@ -1174,7 +1173,7 @@ const TeamHub = () => {
                             return (
                               <div
                                 key={a.id}
-                                className={`p-3 text-sm ${flag ? "bg-orange-50/40" : ""}`}
+                                className={`p-3 text-sm ${flag ? "bg-warning/10" : ""}`}
                               >
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="flex-1 min-w-0">
@@ -1189,8 +1188,8 @@ const TeamHub = () => {
                                         <span
                                           className="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wider"
                                           style={{
-                                            background: "hsl(224 72% 95%)",
-                                            color: "hsl(224 72% 35%)",
+                                            background: "hsl(var(--primary-pastel))",
+                                            color: "hsl(var(--primary))",
                                             letterSpacing: "0.03em",
                                           }}
                                           title={`Sub category: ${a.subCategory}`}
@@ -1224,7 +1223,7 @@ const TeamHub = () => {
                                   </div>
                                 </div>
                                 {flag && (
-                                  <div className="mt-2 rounded-md bg-orange-100/70 border border-orange-200 p-2 text-xs text-orange-900">
+                                  <div className="mt-2 rounded-md bg-destructive/8 border border-destructive/20 p-2 text-xs text-foreground">
                                     <span className="font-medium">Flagged:</span>{" "}
                                     {flag.reason}
                                   </div>
@@ -1244,7 +1243,7 @@ const TeamHub = () => {
                     <span
                       className={`font-bold text-lg tabular-nums ${
                         Math.abs(displayTotal - 100) < 0.01
-                          ? "text-green-600"
+                          ? "text-success"
                           : "text-destructive"
                       }`}
                     >
@@ -1254,11 +1253,11 @@ const TeamHub = () => {
                 )}
 
                 {selected.feedback && (
-                  <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
-                    <p className="text-xs font-medium text-orange-800">
+                  <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+                    <p className="text-xs font-medium text-destructive">
                       Previous summary feedback:
                     </p>
-                    <p className="text-sm text-orange-900 mt-1">
+                    <p className="text-sm text-foreground mt-1">
                       {selected.feedback}
                     </p>
                   </div>
@@ -1283,7 +1282,6 @@ const TeamHub = () => {
                       </Button>
                       <Button
                         onClick={handleApprove}
-                        className="bg-green-600 hover:bg-green-700"
                       >
                         Save &amp; Approve
                       </Button>
@@ -1309,7 +1307,6 @@ const TeamHub = () => {
                       <Button
                         onClick={handleApprove}
                         disabled={flagCount > 0}
-                        className="bg-green-600 hover:bg-green-700"
                       >
                         Approve
                       </Button>
@@ -1837,7 +1834,7 @@ const FlagControl = ({
         size="sm"
         variant="secondary"
         onClick={onClear}
-        className="h-7 text-xs gap-1 bg-orange-100 hover:bg-orange-200 text-orange-800 border border-orange-200"
+        className="h-7 text-xs gap-1 bg-destructive/10 hover:bg-destructive/20 text-destructive border border-destructive/30"
         aria-label="Clear flag"
       >
         <X className="h-3 w-3" /> Flagged
@@ -1858,7 +1855,7 @@ const FlagControl = ({
           type="button"
           size="sm"
           variant="ghost"
-          className="h-7 text-xs gap-1 text-muted-foreground hover:text-orange-700"
+          className="h-7 text-xs gap-1 text-muted-foreground hover:text-destructive"
         >
           <Flag className="h-3 w-3" /> Flag
         </Button>

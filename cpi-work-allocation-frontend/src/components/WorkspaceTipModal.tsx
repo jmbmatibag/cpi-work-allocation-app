@@ -30,13 +30,6 @@ interface WorkspaceTipModalProps {
   onClose?: () => void;
 }
 
-/**
- * One-time onboarding overlay for a workspace page.
- *
- * Reads `localStorage.getItem(storageKey)` on mount; if truthy the modal
- * never renders. When the user checks "Do not show again" and clicks
- * "Got it", the key is written so subsequent visits skip it.
- */
 export default function WorkspaceTipModal({
   storageKey,
   title,
@@ -66,18 +59,18 @@ export default function WorkspaceTipModal({
   return (
     <Dialog open onOpenChange={() => handleClose()}>
       <DialogContent className="max-w-xl overflow-hidden">
-        {/* Accent bar — overflow-hidden on DialogContent clips it to the modal's rounded corners */}
+        {/* Accent bar */}
         <div
           className="absolute top-0 left-0 right-0 h-1.5"
-          style={{ background: "linear-gradient(90deg, hsl(224 72% 45%), hsl(262 60% 55%))" }}
+          style={{ background: "linear-gradient(90deg, hsl(var(--primary)), hsl(262 60% 55%))" }}
         />
 
         <DialogHeader className="pt-2">
-          <DialogTitle className="text-xl font-semibold" style={{ color: "hsl(222 20% 12%)" }}>
+          <DialogTitle className="text-xl font-semibold text-foreground">
             {title}
           </DialogTitle>
           {subtitle && (
-            <DialogDescription className="text-sm mt-1" style={{ color: "hsl(220 10% 45%)" }}>
+            <DialogDescription className="text-sm mt-1 text-muted-foreground">
               {subtitle}
             </DialogDescription>
           )}
@@ -88,21 +81,19 @@ export default function WorkspaceTipModal({
           {tips.map((tip, i) => (
             <div
               key={i}
-              className="flex gap-3 rounded-lg p-3"
-              style={{ background: "hsl(220 14% 97%)", border: "1px solid hsl(220 13% 92%)" }}
+              className="flex gap-3 rounded-lg p-3 bg-muted/60 border border-border"
             >
               {/* Step badge */}
               <div
-                className="flex items-center justify-center w-7 h-7 rounded-full shrink-0 text-[11px] font-bold"
-                style={{ background: "hsl(224 72% 45%)", color: "hsl(0 0% 100%)" }}
+                className="flex items-center justify-center w-7 h-7 rounded-full shrink-0 text-[11px] font-bold bg-primary text-primary-foreground"
               >
                 {i + 1}
               </div>
               <div className="space-y-0.5 min-w-0">
-                <p className="text-[13px] font-semibold" style={{ color: "hsl(222 20% 15%)" }}>
+                <p className="text-[13px] font-semibold text-foreground">
                   {tip.heading}
                 </p>
-                <p className="text-[12.5px] leading-relaxed" style={{ color: "hsl(220 10% 40%)" }}>
+                <p className="text-[12.5px] leading-relaxed text-muted-foreground">
                   {tip.body}
                 </p>
               </div>
@@ -111,13 +102,12 @@ export default function WorkspaceTipModal({
         </div>
 
         {note && (
-          <p className="text-[11.5px] leading-relaxed px-0.5" style={{ color: "hsl(220 10% 50%)" }}>
+          <p className="text-[11.5px] leading-relaxed px-0.5 text-muted-foreground">
             <span className="font-medium">Note:</span> {note}
           </p>
         )}
 
         <DialogFooter className="flex items-center gap-3 pt-2 sm:justify-between">
-          {/* "Do not show again" checkbox — hidden when opened manually via the Guide button */}
           <div className="flex items-center gap-2">
             {!forceOpen && (
               <>
@@ -128,8 +118,7 @@ export default function WorkspaceTipModal({
                 />
                 <Label
                   htmlFor={`${storageKey}-hide`}
-                  className="text-[12px] cursor-pointer select-none"
-                  style={{ color: "hsl(220 10% 45%)" }}
+                  className="text-[12px] cursor-pointer select-none text-muted-foreground"
                 >
                   Do not show again
                 </Label>
@@ -137,12 +126,7 @@ export default function WorkspaceTipModal({
             )}
           </div>
 
-          <Button
-            onClick={handleClose}
-            size="sm"
-            className="px-5"
-            style={{ background: "hsl(224 72% 45%)", color: "white" }}
-          >
+          <Button onClick={handleClose} size="sm" className="px-5">
             Got it
           </Button>
         </DialogFooter>

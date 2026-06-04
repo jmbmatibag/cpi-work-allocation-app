@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from 'node:crypto';
 import type { Request } from 'express';
 import { prisma } from './prisma.js';
+import { SERVER_BOOT_TIME } from './bootTime.js';
 
 export const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -67,6 +68,13 @@ export async function rotateRefreshToken(
   });
 
   if (!existing) return { ok: false, reason: 'invalid' };
+
+  // Server-boot invalidation: a refresh token created before this server
+  // process started belongs to a previous run (yesterday's session). Treat
+  // it as expired so the client is forced back to the login page.
+  if (Math.floor(existing.createdAt.getTime() / 1000) < SERVER_BOOT_TIME) {
+    return { ok: false, reason: 'expired' };
+  }
 
   if (existing.revokedAt) {
     // Distinguish rotation-replay (theft signal) from logout-replay (benign):

@@ -100,12 +100,12 @@ const ProgressRing = ({ percentage }: ProgressRingProps) => {
           </p>
         )}
         {isComplete && (
-          <p className="text-sm text-green-600 mt-2 font-medium">
+          <p className="text-sm text-success mt-2 font-medium">
             ✓ Fully allocated!
           </p>
         )}
         {!isComplete && !isOver && (
-          <p className="text-sm text-amber-500 mt-2 font-medium">
+          <p className="text-sm text-warning mt-2 font-medium">
             ⓘ You need {parseFloat((100 - actual).toFixed(2))}% more to submit.
           </p>
         )}

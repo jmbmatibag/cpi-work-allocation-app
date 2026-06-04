@@ -57,7 +57,7 @@ const SetupPassword = () => {
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="relative w-full max-w-md mx-4 text-center">
           <div className="glass-card rounded-2xl p-8 space-y-4">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-red-100 text-red-600 mx-auto">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-destructive/10 text-destructive mx-auto">
               <X className="w-6 h-6" />
             </div>
             <h1 className="text-lg font-semibold">Setup link missing</h1>

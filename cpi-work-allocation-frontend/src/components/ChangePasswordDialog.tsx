@@ -56,10 +56,13 @@ const ChangePasswordDialog = ({ open, onOpenChange }: ChangePasswordDialogProps)
     setServerError(null);
     try {
       await api.auth.changePassword(currentPassword, newPassword);
+      // Backend always returns sessionExpired:true — it forces a full
+      // logout so the new password takes effect on the very next sign-in.
       toast.success("Password changed", {
-        description: "Your password has been updated. Other sessions have been signed out.",
+        description: "Your password has been updated. Please sign in again.",
       });
-      handleOpenChange(false);
+      localStorage.clear();
+      window.location.href = '/login';
     } catch (err) {
       const msg =
         err instanceof ApiError

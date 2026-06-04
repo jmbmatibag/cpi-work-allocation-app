@@ -35,10 +35,10 @@ function strengthTier(score: number): {
   colorClass: string;
   widthPct: number;
 } {
-  if (score <= 2) return { label: "Weak",      colorClass: "bg-red-500",     widthPct: (score / PASSWORD_RULES.length) * 100 };
-  if (score === 3) return { label: "Medium",   colorClass: "bg-amber-500",   widthPct: 60 };
-  if (score === 4) return { label: "Strong",   colorClass: "bg-lime-500",    widthPct: 80 };
-  return             { label: "Excellent",     colorClass: "bg-emerald-600",  widthPct: 100 };
+  if (score <= 2) return { label: "Weak",      colorClass: "bg-destructive", widthPct: (score / PASSWORD_RULES.length) * 100 };
+  if (score === 3) return { label: "Medium",   colorClass: "bg-warning",     widthPct: 60 };
+  if (score === 4) return { label: "Strong",   colorClass: "bg-success",     widthPct: 80 };
+  return             { label: "Excellent",     colorClass: "bg-success",     widthPct: 100 };
 }
 
 interface PasswordStrengthMeterProps {
@@ -82,12 +82,12 @@ const PasswordStrengthMeter = ({ password }: PasswordStrengthMeterProps) => {
             <li
               key={rule.label}
               className={`flex items-center gap-2 text-sm transition-colors ${
-                ok ? "text-emerald-600" : "text-muted-foreground"
+                ok ? "text-success" : "text-muted-foreground"
               }`}
             >
               <span
                 className={`inline-flex items-center justify-center w-4 h-4 rounded-full shrink-0 ${
-                  ok ? "bg-emerald-100" : "bg-muted"
+                  ok ? "bg-success/10" : "bg-muted"
                 }`}
               >
                 {ok ? (

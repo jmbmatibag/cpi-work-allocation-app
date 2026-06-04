@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
+import SessionExpiredModal from "@/components/SessionExpiredModal";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { EmployeesProvider } from "@/contexts/EmployeesContext";
 import { JournalProvider } from "@/contexts/JournalContext";
@@ -50,9 +52,11 @@ const queryClient = new QueryClient();
  * Workspace read from it but nothing in it reads from them.
  */
 const App = () => (
+  <ThemeProvider attribute="class" defaultTheme="light" disableTransitionOnChange>
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Sonner />
+      <SessionExpiredModal />
       <EmployeesProvider>
         <AuthProvider>
           <BrowserRouter>
@@ -125,6 +129,7 @@ const App = () => (
       </EmployeesProvider>
     </TooltipProvider>
   </QueryClientProvider>
+  </ThemeProvider>
 );
 
 export default App;

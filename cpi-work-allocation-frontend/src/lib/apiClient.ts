@@ -221,7 +221,10 @@ async function request<T>(
       if (res.status === 401) {
         const PUBLIC_PATHS = ['/login', '/setup-password', '/reset-password'];
         if (!PUBLIC_PATHS.includes(window.location.pathname)) {
-          window.location.href = '/login';
+          localStorage.clear();
+          // Fire a DOM event so the SessionExpiredModal can show a message
+          // before the redirect happens. The modal owns the navigation.
+          window.dispatchEvent(new CustomEvent('auth:session-expired'));
         }
         throw new ApiError(401, { error: 'Session expired' });
       }
@@ -279,9 +282,10 @@ const auth = {
     post<{ message: string }>('/api/auth/reset-password', { token, password }),
 
   // Changes the logged-in user's password. Requires the current password.
-  // Re-issues fresh access + refresh cookies so the current session stays alive.
+  // On success the backend clears all sessions and returns sessionExpired:true —
+  // the caller must clear local state and redirect to /login.
   changePassword: (currentPassword: string, newPassword: string) =>
-    post<{ message: string }>('/api/auth/change-password', { currentPassword, newPassword }),
+    post<{ message: string; sessionExpired: true }>('/api/auth/change-password', { currentPassword, newPassword }),
 
   me: (signal?: AbortSignal) =>
     get<{ user: ApiUser }>('/api/auth/me', signal),

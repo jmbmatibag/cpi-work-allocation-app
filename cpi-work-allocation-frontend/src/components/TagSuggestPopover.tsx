@@ -112,8 +112,8 @@ export const TagSuggestPopover = ({
               }}
               className="flex items-baseline justify-between gap-2 px-2.5 py-1.5 cursor-pointer transition-colors"
               style={{
-                background: active ? "hsl(224 72% 95%)" : "transparent",
-                color: active ? "hsl(224 72% 25%)" : "hsl(222 20% 15%)",
+                background: active ? "hsl(var(--primary-pastel))" : "transparent",
+                color: active ? "hsl(var(--primary))" : "hsl(222 20% 15%)",
               }}
             >
               <span className="text-[13px] font-medium truncate">
@@ -123,7 +123,7 @@ export const TagSuggestPopover = ({
                 <span
                   className="text-[11px] truncate shrink-0"
                   style={{
-                    color: active ? "hsl(224 50% 45%)" : "hsl(220 10% 55%)",
+                    color: active ? "hsl(var(--primary))" : "hsl(220 10% 55%)",
                   }}
                 >
                   {item.sublabel}

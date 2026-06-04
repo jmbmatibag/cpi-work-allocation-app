@@ -109,7 +109,7 @@ const HOURS_VALUE_RE = /(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)/gi;
 // the hours value applies individually to EVERY project client, not divided.
 const EACH_CLIENT_RE = /\b(?:each|per)\s+client\b/i;
 
-// @CLIENT tag — capture group 1 = the client code (uppercased on use).
+// @CLIENT tag — capture group 1 = the client code (original casing; resolved against knownClients).
 const DYN_CLIENT_TAG_RE = /(?<![A-Za-z0-9])@([A-Za-z][A-Za-z0-9_-]*)/g;
 
 // #Tag — capture group 1 = the tag name for sub-category lookup.
@@ -353,7 +353,7 @@ function detectDynamicScenario(
   // Positions are used in Scenario D to pair each client with its hours.
   const clientMatches = [...line.matchAll(new RegExp(DYN_CLIENT_TAG_RE.source, "g"))];
   const clients = clientMatches.map((m) => ({
-    name: m[1].toUpperCase(),
+    name: opts.knownClients.find(c => c.toLowerCase() === m[1].toLowerCase()) ?? m[1],
     index: m.index ?? 0,
   }));
 
@@ -616,7 +616,7 @@ function extractBullets(text: string): ExtractedBullet[] {
     // Extract every @CLIENT tag so mergeClassifications can fan out to
     // multiple tasks when more than one client appears in the same bullet.
     const clients = [...description.matchAll(/@([A-Za-z][A-Za-z0-9_-]*)/g)]
-      .map((cm) => cm[1].toUpperCase());
+      .map((cm) => cm[1]);
 
     out.push({
       id: `b${id++}`,
@@ -838,9 +838,14 @@ function mergeClassifications(
     // When the original description contained multiple @CLIENT tags, fan out
     // into one task per client and divide the percentage equally.
     // A single client (or none) falls through to the AI-classified client.
+    // Resolve each raw tag against knownClients (case-insensitive) so the
+    // canonical casing from Admin Settings is preserved on the card.
+    const resolvedBulletClients = b.clients.map(
+      raw => opts.knownClients.find(c => c.toLowerCase() === raw.toLowerCase()) ?? raw,
+    );
     const clients =
-      b.clients.length > 1
-        ? b.clients
+      resolvedBulletClients.length > 1
+        ? resolvedBulletClients
         : [c.client || fallbackClient];
 
     const percentageEach = b.percentage / clients.length;

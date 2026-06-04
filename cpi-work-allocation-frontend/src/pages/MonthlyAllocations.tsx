@@ -236,9 +236,9 @@ const MonthlyAllocations = () => {
 
   const statusColor =
     status === "Draft"          ? "bg-muted text-muted-foreground"
-    : status === "Pending Review" ? "bg-amber-100 text-amber-800"
-    : status === "Needs Revision" ? "bg-orange-100 text-orange-800"
-    :                               "bg-green-100 text-green-800";
+    : status === "Pending Review" ? "bg-warning/10 text-warning"
+    : status === "Needs Revision" ? "bg-destructive/10 text-destructive"
+    :                               "bg-success/10 text-success";
 
   return (
     <>
@@ -290,20 +290,20 @@ const MonthlyAllocations = () => {
         )}
 
         {status === "Needs Revision" && (
-          <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 space-y-2">
-            <div className="flex items-center gap-2 text-orange-800">
+          <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 space-y-2">
+            <div className="flex items-center gap-2 text-destructive">
               <AlertTriangle className="h-4 w-4" />
               <p className="font-semibold text-sm">
                 Manager requested revisions
               </p>
             </div>
             {existingRecord?.feedback && (
-              <p className="text-xs text-orange-900/90 leading-relaxed">
+              <p className="text-xs text-foreground/80 leading-relaxed">
                 {existingRecord.feedback}
               </p>
             )}
             {flagCount > 0 && (
-              <p className="text-xs text-orange-900/90 flex items-center gap-1.5">
+              <p className="text-xs text-foreground/80 flex items-center gap-1.5">
                 <Flag className="h-3 w-3" />
                 {flagCount} {flagCount === 1 ? "card is" : "cards are"} flagged — see orange highlights in the workspace.
               </p>

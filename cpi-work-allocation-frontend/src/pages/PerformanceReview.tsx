@@ -212,9 +212,9 @@ const PerformanceReview = () => {
   const handlePrint = () => window.print();
 
   const statusBadge = (s: MatrixRow["status"]) =>
-    s === "Delivered" ? "bg-green-100 text-green-800"
-    : s === "On-Track"  ? "bg-blue-100 text-blue-800"
-    :                     "bg-orange-100 text-orange-800";
+    s === "Delivered" ? "bg-success/10 text-success"
+    : s === "On-Track"  ? "bg-info/10 text-info"
+    :                     "bg-destructive/10 text-destructive";
 
   return (
     <>

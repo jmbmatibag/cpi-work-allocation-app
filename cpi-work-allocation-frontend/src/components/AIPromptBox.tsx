@@ -184,11 +184,11 @@ Task Title/Header :
         </p>
         <ul className="mt-2 space-y-1 text-xs text-foreground">
           <li className="flex items-center gap-2">
-            <mark className="bg-green-200/60 rounded-[3px] px-1 not-italic font-mono">@ClientName</mark>
+            <mark className="bg-green-200/60 dark:bg-green-900/50 dark:text-green-300 rounded-[3px] px-1 not-italic font-mono">@ClientName</mark>
             <span className="text-muted-foreground">— tag a client</span>
           </li>
           <li className="flex items-center gap-2">
-            <mark className="bg-orange-200/60 rounded-[3px] px-1 not-italic font-mono">#CategoryName</mark>
+            <mark className="bg-orange-200/60 dark:bg-orange-900/50 dark:text-orange-300 rounded-[3px] px-1 not-italic font-mono">#CategoryName</mark>
             <span className="text-muted-foreground">— tag a work category</span>
           </li>
         </ul>

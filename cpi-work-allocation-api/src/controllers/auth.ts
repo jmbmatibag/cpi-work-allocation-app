@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { randomInt, randomBytes } from 'node:crypto';
+import { randomInt, randomBytes, randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma.js';
@@ -29,8 +29,7 @@ const REFRESH_COOKIE = 'refresh_token';
 // Refresh cookie is scoped to the auth namespace so it's only sent on
 // /api/auth/* endpoints. Reduces exposure compared to path:'/'.
 const REFRESH_COOKIE_PATH = '/api/auth';
-const ACCESS_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours — tokens issued at login are always
-// expired before the next working day begins, regardless of overnight server restarts.
+const ACCESS_TTL_MS = 10 * 60 * 60 * 1000; // 10 hours — strict single-workday limit.
 const OTP_TTL_MS = 10 * 60 * 1000;
 const BCRYPT_ROUNDS = 12;
 const MAX_OTP_ATTEMPTS = 5;
@@ -58,8 +57,8 @@ function refreshCookieOptions() {
   };
 }
 
-function issueAccessCookie(res: Response, userId: string, roles: string[]): void {
-  const token = jwt.sign({ sub: userId, roles }, JWT_SECRET, {
+function issueAccessCookie(res: Response, userId: string, roles: string[], sessionId: string): void {
+  const token = jwt.sign({ sub: userId, roles, sessionId }, JWT_SECRET, {
     expiresIn: Math.floor(ACCESS_TTL_MS / 1000),
     algorithm: 'HS256',
   });
@@ -306,9 +305,25 @@ export async function verifyOtp(req: Request, res: Response): Promise<void> {
     });
   }
 
+  // ── Single-session lock ───────────────────────────────────────────────────
+  // 1. Kill every existing refresh token for this user. This is the critical
+  //    step: without it, the old browser's refresh token is still valid in the
+  //    DB and the frontend's automatic retry loop would refresh its way back in
+  //    despite the activeSessionId mismatch on the access token.
+  await revokeAllForUser(user.id);
+
+  // 2. Stamp a fresh sessionId. Overwriting activeSessionId ensures any
+  //    still-live access token from a prior session fails the middleware check
+  //    the moment it next hits an authenticated endpoint.
+  const sessionId = randomUUID();
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { activeSessionId: sessionId },
+  });
+
   // Issue both cookies: short-lived access token (stateless JWT) and
   // long-lived refresh token (opaque, stored hashed in DB).
-  issueAccessCookie(res, user.id, user.roles);
+  issueAccessCookie(res, user.id, user.roles, sessionId);
   const refreshToken = await issueRefreshToken(user.id, req);
   setRefreshCookie(res, refreshToken);
 
@@ -344,7 +359,27 @@ export async function refresh(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  issueAccessCookie(res, result.userId, result.roles);
+  // Re-use the existing activeSessionId — do NOT generate a new one here.
+  // Session identity is owned by the login event (verifyOtp). If a second
+  // browser has since logged in and overwritten activeSessionId, this lookup
+  // returns their sessionId and the refreshed access token would pass the
+  // middleware check for that browser — but this browser's refresh token was
+  // already revoked at login time (revokeAllForUser in verifyOtp), so it can
+  // never reach this point.
+  const userRecord = await prisma.user.findUnique({
+    where: { id: result.userId },
+    select: { activeSessionId: true },
+  });
+
+  const sessionId = userRecord?.activeSessionId;
+  if (!sessionId) {
+    // activeSessionId is null — the user was explicitly logged out elsewhere.
+    clearAuthCookies(res);
+    res.status(401).json({ error: 'No active session. Please sign in again.' });
+    return;
+  }
+
+  issueAccessCookie(res, result.userId, result.roles, sessionId);
   setRefreshCookie(res, result.newToken);
   res.json({ ok: true });
 }
@@ -375,16 +410,38 @@ export async function me(req: AuthRequest, res: Response): Promise<void> {
 }
 
 export async function logout(req: Request, res: Response): Promise<void> {
-  // Best-effort revoke the current session's refresh token. The cookie path
-  // is /api/auth, so this endpoint receives the refresh cookie.
+  // Best-effort revoke the current session's refresh token.
   const raw = req.cookies?.refresh_token;
   if (raw) await revokeRefreshToken(raw);
+
+  // Null out activeSessionId so the access token can never be replayed,
+  // even if it hasn't expired yet. We decode (not verify) because the
+  // cookie may be present but not valid — we still want to clear the lock.
+  const accessToken: string | undefined = req.cookies?.auth_token;
+  if (accessToken) {
+    try {
+      const decoded = jwt.decode(accessToken) as { sub?: string } | null;
+      if (decoded?.sub) {
+        await prisma.user.update({
+          where: { id: decoded.sub },
+          data: { activeSessionId: null },
+        });
+      }
+    } catch {
+      // best-effort — never block the logout response
+    }
+  }
+
   clearAuthCookies(res);
   res.json({ message: 'Logged out' });
 }
 
 export async function logoutAll(req: AuthRequest, res: Response): Promise<void> {
   const revoked = await revokeAllForUser(req.userId!);
+  await prisma.user.update({
+    where: { id: req.userId! },
+    data: { activeSessionId: null },
+  });
   clearAuthCookies(res);
   res.json({ message: 'Logged out from all sessions', revoked });
 }
@@ -507,18 +564,25 @@ export async function changePassword(req: AuthRequest, res: Response): Promise<v
 
   const newPasswordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
 
+  // Stamp passwordUpdatedAt to the current second. The auth middleware
+  // checks every JWT's iat against this value, so ALL tokens issued before
+  // this moment are mathematically revoked — no blocklist needed.
+  // Clearing activeSessionId ensures even a token with a future iat
+  // (impossible in practice but belt-and-suspenders) fails the session lock.
   await prisma.user.update({
     where: { id: user.id },
-    data: { passwordHash: newPasswordHash },
+    data: {
+      passwordHash: newPasswordHash,
+      passwordUpdatedAt: new Date(),
+      activeSessionId: null,
+    },
   });
 
-  // Revoke all refresh tokens so other devices are bumped on their next
-  // refresh cycle, then issue fresh tokens for this session so the user
-  // who just changed their password stays logged in.
+  // Revoke all refresh tokens so the DB is fully clean.
   await revokeAllForUser(user.id);
-  issueAccessCookie(res, user.id, user.roles);
-  const newRefreshToken = await issueRefreshToken(user.id, req);
-  setRefreshCookie(res, newRefreshToken);
 
-  res.json({ message: 'Password changed successfully.' });
+  // Force the requester out too — do NOT re-issue fresh cookies.
+  // The frontend receives sessionExpired: true and redirects to /login.
+  clearAuthCookies(res);
+  res.json({ sessionExpired: true, message: 'Password changed. Please sign in again.' });
 }

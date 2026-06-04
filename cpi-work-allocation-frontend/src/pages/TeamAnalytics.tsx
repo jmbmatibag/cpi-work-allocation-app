@@ -13,7 +13,7 @@ import type { AllocationRecord } from "@/contexts/AllocationsContext";
 // ─── Palette ─────────────────────────────────────────────────────────────────
 
 const PALETTE = [
-  "hsl(224 72% 55%)",
+  "hsl(var(--primary))",
   "hsl(262 80% 60%)",
   "hsl(186 70% 45%)",
   "hsl(142 60% 45%)",
@@ -134,18 +134,13 @@ const CustomTooltip = ({
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   return (
-    <div
-      className="rounded-lg px-3 py-2 text-xs shadow-lg"
-      style={{ background: "hsl(0 0% 100%)", border: "1px solid hsl(220 13% 88%)", color: "hsl(222 20% 15%)" }}
-    >
+    <div className="rounded-lg px-3 py-2 text-xs shadow-lg bg-popover border border-border text-popover-foreground">
       <p className="font-semibold mb-0.5">{d.name}</p>
-      <p style={{ color: "hsl(220 10% 45%)" }}>
+      <p className="text-muted-foreground">
         {d.value.toFixed(2)}% · {d.count} {d.count === 1 ? "activity" : "activities"}
       </p>
       {hasChildren && (
-        <p className="mt-1 text-[10px]" style={{ color: "hsl(224 72% 45%)" }}>
-          Click to drill down ↓
-        </p>
+        <p className="mt-1 text-[10px] text-primary">Click to drill down ↓</p>
       )}
     </div>
   );
@@ -173,40 +168,24 @@ export const TeamAnalytics = ({ records }: TeamAnalyticsProps) => {
     setLevel(NEXT_LEVEL[path[idx].level] as DrillLevel);
   };
 
-  // Empty-state placeholder — keep the slot in the dashboard grid
-  // populated when there's nothing to chart. Returning null here used
-  // to collapse the grid column and break the side-by-side layout
-  // with the Team Activity Calendar.
   if (records.length === 0) {
     return (
       <div className="mt-2 h-full">
-        <div
-          className="rounded-xl p-5 h-full"
-          style={{
-            background: "hsl(0 0% 100%)",
-            border: "1px dashed hsl(220 13% 80%)",
-          }}
-        >
+        <div className="rounded-xl p-5 h-full bg-card border border-dashed border-border">
           <div className="mb-3">
-            <h3
-              className="text-[14px] font-semibold"
-              style={{ color: "hsl(222 20% 15%)" }}
-            >
+            <h3 className="text-[14px] font-semibold text-card-foreground">
               Work Allocation Breakdown
             </h3>
-            <p
-              className="text-[11px] mt-0.5"
-              style={{ color: "hsl(220 10% 50%)" }}
-            >
+            <p className="text-[11px] mt-0.5 text-muted-foreground">
               Work Category · click a slice to drill down
             </p>
           </div>
           <div
-            className="flex flex-col items-center justify-center text-center"
-            style={{ height: 320, color: "hsl(220 10% 55%)" }}
+            className="flex flex-col items-center justify-center text-center text-muted-foreground"
+            style={{ height: 320 }}
           >
             <p className="text-sm">No data available for this period</p>
-            <p className="text-[11px] mt-1" style={{ color: "hsl(220 10% 65%)" }}>
+            <p className="text-[11px] mt-1 text-muted-foreground/60">
               Approved or in-review allocations will appear here.
             </p>
           </div>
@@ -217,14 +196,12 @@ export const TeamAnalytics = ({ records }: TeamAnalyticsProps) => {
 
   return (
     <div className="mt-2 h-full">
-
-      {/* Drill-down chart */}
-      <div className="rounded-xl p-5 h-full" style={{ background: "hsl(0 0% 100%)", border: "1px solid hsl(220 13% 91%)" }}>
+      <div className="rounded-xl p-5 h-full bg-card border border-border">
         <div className="mb-3">
-          <h3 className="text-[14px] font-semibold" style={{ color: "hsl(222 20% 15%)" }}>
+          <h3 className="text-[14px] font-semibold text-card-foreground">
             Work Allocation Breakdown
           </h3>
-          <p className="text-[11px] mt-0.5" style={{ color: "hsl(220 10% 50%)" }}>
+          <p className="text-[11px] mt-0.5 text-muted-foreground">
             {LEVEL_LABELS[level]}{nextLevel ? " · click a slice to drill down" : " · deepest level"}
           </p>
         </div>
@@ -232,14 +209,23 @@ export const TeamAnalytics = ({ records }: TeamAnalyticsProps) => {
         {/* Breadcrumb */}
         {path.length > 0 && (
           <div className="flex items-center flex-wrap gap-1 mb-3 text-[11px]">
-            <button onClick={() => handleBreadcrumb(-1)} className="flex items-center gap-0.5 hover:opacity-70 transition-opacity" style={{ color: "hsl(224 72% 45%)" }}>
+            <button
+              onClick={() => handleBreadcrumb(-1)}
+              className="flex items-center gap-0.5 text-primary hover:opacity-70 transition-opacity"
+            >
               <Home className="h-3 w-3" /> All
             </button>
             {path.map((step, i) => (
               <span key={i} className="flex items-center gap-0.5">
-                <ChevronRight className="h-3 w-3" style={{ color: "hsl(220 10% 60%)" }} />
-                <button onClick={() => handleBreadcrumb(i)} className="hover:opacity-70 transition-opacity"
-                  style={{ color: i === path.length - 1 ? "hsl(222 20% 15%)" : "hsl(224 72% 45%)", fontWeight: i === path.length - 1 ? 600 : 400 }}>
+                <ChevronRight className="h-3 w-3 text-muted-foreground/60" />
+                <button
+                  onClick={() => handleBreadcrumb(i)}
+                  className={
+                    i === path.length - 1
+                      ? "font-semibold text-foreground hover:opacity-70 transition-opacity"
+                      : "text-primary hover:opacity-70 transition-opacity"
+                  }
+                >
                   {step.label}
                 </button>
               </span>
@@ -248,7 +234,7 @@ export const TeamAnalytics = ({ records }: TeamAnalyticsProps) => {
         )}
 
         {slices.length === 0 ? (
-          <div className="flex items-center justify-center h-[260px] text-sm" style={{ color: "hsl(220 10% 55%)" }}>
+          <div className="flex items-center justify-center h-[260px] text-sm text-muted-foreground">
             No data at this level.
           </div>
         ) : (
@@ -262,14 +248,18 @@ export const TeamAnalytics = ({ records }: TeamAnalyticsProps) => {
                 dataKey="value"
                 onClick={(d: SliceData) => handleSliceClick(d)}
                 style={{ cursor: nextLevel ? "pointer" : "default" }}
-                stroke="hsl(0 0% 100%)" strokeWidth={1}
+                stroke="hsl(var(--card))"
+                strokeWidth={1}
               >
                 {slices.map((_, i) => <Cell key={i} fill={color(i)} />)}
               </Pie>
               <Tooltip content={<CustomTooltip hasChildren={!!nextLevel} />} />
               <Legend
-                iconType="circle" iconSize={8}
-                formatter={(value) => <span style={{ fontSize: 11, color: "hsl(222 20% 20%)" }}>{value}</span>}
+                iconType="circle"
+                iconSize={8}
+                formatter={(value) => (
+                  <span className="text-foreground" style={{ fontSize: 11 }}>{value}</span>
+                )}
               />
             </PieChart>
           </ResponsiveContainer>
@@ -277,15 +267,22 @@ export const TeamAnalytics = ({ records }: TeamAnalyticsProps) => {
 
         {/* Value list */}
         {slices.length > 0 && (
-          <ul className="mt-3 space-y-1.5 border-t pt-3" style={{ borderColor: "hsl(220 13% 93%)" }}>
+          <ul className="mt-3 space-y-1.5 border-t border-border pt-3">
             {slices.map((s, i) => (
               <li key={s.name} className="flex items-center gap-2 text-[12px]">
-                <span className="inline-block w-2 h-2 rounded-full shrink-0" style={{ background: color(i) }} />
-                <span className="flex-1 truncate" style={{ color: "hsl(222 20% 20%)" }}>{s.name}</span>
-                <span className="tabular-nums font-medium" style={{ color: "hsl(222 20% 35%)" }}>{s.value.toFixed(1)}%</span>
+                <span
+                  className="inline-block w-2 h-2 rounded-full shrink-0"
+                  style={{ background: color(i) }}
+                />
+                <span className="flex-1 truncate text-foreground">{s.name}</span>
+                <span className="tabular-nums font-medium text-muted-foreground">
+                  {s.value.toFixed(1)}%
+                </span>
                 {nextLevel && (
-                  <button onClick={() => handleSliceClick(s)} className="text-[10px] hover:opacity-70"
-                    style={{ color: "hsl(224 72% 50%)" }}>
+                  <button
+                    onClick={() => handleSliceClick(s)}
+                    className="text-[10px] text-primary hover:opacity-70 transition-opacity"
+                  >
                     drill ↓
                   </button>
                 )}
@@ -294,7 +291,6 @@ export const TeamAnalytics = ({ records }: TeamAnalyticsProps) => {
           </ul>
         )}
       </div>
-
     </div>
   );
 };

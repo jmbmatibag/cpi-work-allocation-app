@@ -67,6 +67,14 @@ model User {
   // which tracks failed *verify* guesses against a single live code.
   otpResendCount  Int       @default(0)
   otpLockoutUntil DateTime?
+  // Stamped every time the user changes their password. The auth middleware
+  // rejects any JWT whose iat is before this timestamp, mathematically
+  // revoking all tokens issued prior to the password change.
+  passwordUpdatedAt DateTime  @default(now())
+  // Opaque UUID embedded in every access JWT and kept here as the
+  // single source of truth for the active session. A new login overwrites
+  // this, instantly invalidating any previously issued tokens.
+  activeSessionId   String?
   // Multi-role: a user can wear multiple hats simultaneously (e.g. an IT
   // Director who is also an Admin, or a Department Head who is also a
   // Manager and an Employee). Permissions are the UNION of the listed

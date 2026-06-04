@@ -45,6 +45,13 @@ export interface AggregatedTask {
   days: string[];
   /** 2dp percentage of the month. */
   pct: number;
+  /**
+   * True when at least one source entry carried an explicit @client tag
+   * (even when the tag equals the fallback label, e.g. @Internal).
+   * Used by formatAggregationAsPrompt to preserve the @tag in the generated
+   * prompt so the user can see their intent reflected in the output.
+   */
+  explicitClient: boolean;
 }
 
 export interface AggregationOptions {
@@ -72,7 +79,7 @@ const HIERARCHICAL_BULLET_RE = /^(?:[-–]{2,}|[•*])\s/;
 
 type LineUnit = {
   bullets: string[];
-  /** All @client tags found in this unit, uppercased. Empty when none. */
+  /** All @client tags found in this unit (original casing). Empty when none. */
   clientTags: string[];
   categoryTag?: string;
 };
@@ -117,7 +124,7 @@ function descriptionToUnit(description: string): LineUnit {
   const combined = rawLines.join(" ");
   const clientTags = [
     ...combined.matchAll(new RegExp(CLIENT_TAG_RE.source, "g")),
-  ].map((m) => m[1].toUpperCase());
+  ].map((m) => m[1]);
   const categoryTag = combined.match(CATEGORY_TAG_RE)?.[1];
 
   // When the first line is a bare annotation header — only tags and a
@@ -190,7 +197,7 @@ function parseEntryIntoUnits(content: string): LineUnit[] {
 
       if (subBullets.length > 0) {
         const combined = `${headerText} ${subBullets.join(" ")}`;
-        const clientTags = [...combined.matchAll(new RegExp(CLIENT_TAG_RE.source, "g"))].map(m => m[1].toUpperCase());
+        const clientTags = [...combined.matchAll(new RegExp(CLIENT_TAG_RE.source, "g"))].map(m => m[1]);
         const categoryTag = combined.match(CATEGORY_TAG_RE)?.[1];
         units.push({
           bullets: [headerText, ...subBullets],
@@ -205,7 +212,7 @@ function parseEntryIntoUnits(content: string): LineUnit[] {
     // Standalone line
     const bullet = line.replace(LIST_MARKER_RE, "").trim();
     if (bullet) {
-      const clientTags = [...bullet.matchAll(new RegExp(CLIENT_TAG_RE.source, "g"))].map(m => m[1].toUpperCase());
+      const clientTags = [...bullet.matchAll(new RegExp(CLIENT_TAG_RE.source, "g"))].map(m => m[1]);
       const categoryTag = bullet.match(CATEGORY_TAG_RE)?.[1];
       units.push({
         bullets: [bullet],
@@ -327,7 +334,10 @@ export function aggregateJournalEntries(
     if (clientFallbackRe) {
       for (const b of unit.bullets) {
         const m = b.match(clientFallbackRe);
-        if (m) return [m[1].toUpperCase()];
+        if (m) {
+          const canonical = knownClients.find(c => c.toLowerCase() === m[1].toLowerCase()) ?? m[1];
+          return [canonical];
+        }
       }
     }
     return [fallbackClient];
@@ -341,6 +351,8 @@ export function aggregateJournalEntries(
     seenBullets: Set<string>;
     /** Accumulated minutes — actual block durations or 480/day for legacy entries. */
     totalMinutes: number;
+    /** Set to true if any contributing unit carried an explicit @client tag. */
+    explicitClient: boolean;
   };
   const buckets = new Map<string, Bucket>();
 
@@ -370,6 +382,7 @@ export function aggregateJournalEntries(
         if (unit.bullets.length === 0) continue;
 
         const clients = resolveClients(unit);
+        const isExplicit = unit.clientTags.length > 0;
         const category = unit.categoryTag;
         const minutes = calcMinutes(block.startTime, block.endTime);
         // Divide block duration equally when the line mentions multiple clients.
@@ -379,9 +392,10 @@ export function aggregateJournalEntries(
           const key = `${client}::${category ?? "__untagged__"}`;
           let bucket = buckets.get(key);
           if (!bucket) {
-            bucket = { client, category, bullets: [], days: new Set(), seenBullets: new Set(), totalMinutes: 0 };
+            bucket = { client, category, bullets: [], days: new Set(), seenBullets: new Set(), totalMinutes: 0, explicitClient: false };
             buckets.set(key, bucket);
           }
+          if (isExplicit) bucket.explicitClient = true;
 
           if (minutesEach > 0) bucket.totalMinutes += minutesEach;
           bucket.days.add(entry.date);
@@ -400,6 +414,7 @@ export function aggregateJournalEntries(
 
       for (const unit of units) {
         const clients = resolveClients(unit);
+        const isExplicit = unit.clientTags.length > 0;
         const category = unit.categoryTag;
         // Divide the 8h fallback equally when the line mentions multiple clients.
         const minutesPerClient = 480 / clients.length;
@@ -408,9 +423,10 @@ export function aggregateJournalEntries(
           const key = `${client}::${category ?? "__untagged__"}`;
           let bucket = buckets.get(key);
           if (!bucket) {
-            bucket = { client, category, bullets: [], days: new Set(), seenBullets: new Set(), totalMinutes: 0 };
+            bucket = { client, category, bullets: [], days: new Set(), seenBullets: new Set(), totalMinutes: 0, explicitClient: false };
             buckets.set(key, bucket);
           }
+          if (isExplicit) bucket.explicitClient = true;
 
           // Each new distinct day this bucket appears on contributes its share of 8h.
           if (!bucket.days.has(entry.date)) {
@@ -443,6 +459,7 @@ export function aggregateJournalEntries(
     bullets: b.bullets,
     days: Array.from(b.days).sort(),
     pct: percentages[i],
+    explicitClient: b.explicitClient,
   }));
 }
 
@@ -477,7 +494,7 @@ export function formatAggregationAsPrompt(
   return sorted
     .map((item) => {
       const tagBits: string[] = [];
-      if (item.client !== fallbackClient) tagBits.push(`@${item.client}`);
+      if (item.client !== fallbackClient || item.explicitClient) tagBits.push(`@${item.client}`);
       if (item.category) tagBits.push(`#${item.category}`);
       const tagPrefix = tagBits.length ? `${tagBits.join(" ")} ` : "";
 

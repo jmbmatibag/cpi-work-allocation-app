@@ -657,7 +657,7 @@ const Workspace = ({
                             key={activity.id}
                             className={cn(
                               "border rounded-lg overflow-hidden transition-colors",
-                              flag && "border-orange-200 bg-orange-50/40",
+                              flag && "border-warning/30 bg-warning/10",
                               isIncomplete && !flag && "border-destructive/40 bg-destructive/5",
                             )}
                           >
@@ -665,7 +665,7 @@ const Workspace = ({
                               className={cn(
                                 "flex items-center justify-between px-3 py-2 cursor-pointer transition-colors",
                                 flag
-                                  ? "bg-orange-100/40 hover:bg-orange-100/60"
+                                  ? "bg-warning/10 hover:bg-warning/15"
                                   : "bg-muted/30 hover:bg-muted/50",
                               )}
                               onClick={() => toggleActivityExpand(sIdx, aIdx)}
@@ -685,8 +685,8 @@ const Workspace = ({
                                   <span
                                     className="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wider shrink-0"
                                     style={{
-                                      background: "hsl(224 72% 95%)",
-                                      color: "hsl(224 72% 35%)",
+                                      background: "hsl(var(--primary-pastel))",
+                                      color: "hsl(var(--primary))",
                                       letterSpacing: "0.03em",
                                     }}
                                     title={`Sub category: ${activity.subCategory}`}
@@ -705,7 +705,7 @@ const Workspace = ({
                                 {flag && (
                                   <Badge
                                     variant="outline"
-                                    className="h-5 text-[10px] gap-1 border-orange-300 bg-orange-50 text-orange-700 shrink-0"
+                                    className="h-5 text-[10px] gap-1 border-destructive/30 bg-destructive/10 text-destructive shrink-0"
                                   >
                                     <Flag className="h-2.5 w-2.5" /> Flagged
                                   </Badge>
@@ -730,14 +730,14 @@ const Workspace = ({
                               <>
                                 {flag && (
                                   <div className="px-3 pt-3">
-                                    <div className="rounded-md bg-orange-100/70 border border-orange-200 p-3">
+                                    <div className="rounded-md bg-destructive/8 border border-destructive/20 p-3">
                                       <div className="flex items-start gap-2">
-                                        <Flag className="h-3.5 w-3.5 mt-0.5 shrink-0 text-orange-700" />
+                                        <Flag className="h-3.5 w-3.5 mt-0.5 shrink-0 text-destructive" />
                                         <div className="min-w-0">
-                                          <p className="text-xs font-semibold text-orange-900">
+                                          <p className="text-xs font-semibold text-destructive">
                                             Manager flagged this card
                                           </p>
-                                          <p className="text-xs text-orange-900/90 mt-0.5 whitespace-pre-line">
+                                          <p className="text-xs text-foreground/80 mt-0.5 whitespace-pre-line">
                                             {flag.reason}
                                           </p>
                                         </div>
@@ -1019,7 +1019,7 @@ const Workspace = ({
             <span
               className={`font-bold text-lg ${
                 parseFloat(grandTotal.toFixed(2)) === 100
-                  ? "text-green-600"
+                  ? "text-success"
                   : "text-accent"
               }`}
             >

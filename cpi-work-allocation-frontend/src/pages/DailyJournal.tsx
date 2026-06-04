@@ -140,7 +140,7 @@ function extractTokens(
   }
   const clients = new Set<string>();
   const categories = new Set<string>();
-  for (const m of processed.matchAll(CLIENT_TAG_RE)) clients.add(m[1].toUpperCase());
+  for (const m of processed.matchAll(CLIENT_TAG_RE)) clients.add(m[1]);
   for (const m of processed.matchAll(CATEGORY_TAG_RE))
     categories.add(m[1].replace(/-/g, " "));
   return { clients: [...clients], categories: [...categories] };
@@ -718,8 +718,8 @@ const DailyJournal = () => {
   // uppercase but users type freely) and case-insensitive for
   // categories (the known list mixes cases, e.g. "BD/Mktg/Sales").
   const unmappedClients = useMemo(() => {
-    const known = new Set(clients.map((c) => c.toUpperCase()));
-    return tokens.clients.filter((c) => !known.has(c.toUpperCase()));
+    const known = new Set(clients.map((c) => c.toLowerCase()));
+    return tokens.clients.filter((c) => !known.has(c.toLowerCase()));
   }, [tokens.clients, clients]);
 
   const unmappedCategories = useMemo(() => {
@@ -928,7 +928,7 @@ const DailyJournal = () => {
                 ? `Last saved ${format(new Date(entry.updatedAt), "h:mm a")}`
                 : "No entry yet — start writing below"}
               {isDirty && (
-                <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
+                <span className="inline-flex items-center gap-1 text-warning font-medium">
                   <CircleAlert className="h-3.5 w-3.5" /> Unsaved
                 </span>
               )}
@@ -1077,7 +1077,7 @@ const DailyJournal = () => {
                     className={cn(
                       "gap-1 text-[11px]",
                       isUnmapped
-                        ? "bg-amber-100/70 text-amber-800 hover:bg-amber-100 border-amber-300 cursor-help"
+                        ? "bg-warning/10 text-warning hover:bg-warning/20 border-warning/30 cursor-help"
                         : "bg-primary/8 text-primary/70 hover:bg-primary/12 border-primary/15",
                     )}
                   >
@@ -1118,7 +1118,7 @@ const DailyJournal = () => {
                     className={cn(
                       "gap-1 text-[11px]",
                       isUnmapped
-                        ? "bg-amber-100/70 text-amber-800 hover:bg-amber-100 border-amber-300 cursor-help"
+                        ? "bg-warning/10 text-warning hover:bg-warning/20 border-warning/30 cursor-help"
                         : "bg-accent/8 text-accent/70 hover:bg-accent/12 border-accent/15",
                     )}
                   >
@@ -1150,7 +1150,7 @@ const DailyJournal = () => {
                 );
               })}
               {hasUnmapped && (
-                <span className="ml-auto text-[11px] text-amber-700 flex items-center gap-1">
+                <span className="ml-auto text-[11px] text-warning flex items-center gap-1">
                   <Lightbulb className="h-3 w-3" />
                   {unmappedClients.length + unmappedCategories.length} unmapped
                   &mdash; hover for details

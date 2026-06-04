@@ -257,7 +257,7 @@ const InferenceRulesEditor = () => {
           {isDirty && (
             <>
               {" · "}
-              <span className="text-amber-600 font-medium">Unsaved changes</span>
+              <span className="text-warning font-medium">Unsaved changes</span>
             </>
           )}
         </div>

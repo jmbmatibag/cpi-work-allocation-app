@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import {
   ALL_EXPORT_COLUMNS,
   EXPORT_COLUMN_LABELS,
@@ -19,35 +20,16 @@ import {
   type ExportOptions,
 } from "@/lib/exports/types";
 
-/**
- * Modal for Finance / admin to configure an export of the current
- * Master Overview view. Scope is implicit ("what I see"); this modal
- * collects only format + grouping + columns + title.
- *
- * On submit, calls `onExport(options)` with a fully-formed
- * ExportOptions. The parent owns the actual file generation + download
- * so this component stays presentational.
- */
-
 export interface ExportModalProps {
   open: boolean;
   onClose: () => void;
-  /**
-   * Summary of active filters on the Master Overview, shown at the
-   * top of the modal so users know what they're about to export.
-   */
   filtersSummary: string;
-  /** Scope label for title + filename. e.g. "Apr 2026 · IT/Platforms". */
   scopeLabel: string;
-  /** Filename-safe slug. e.g. "apr-2026-it-platforms". */
   scopeSlug: string;
-  /** Number of rows that will be included (for the button label). */
   rowCount: number;
-  /** Called with the chosen options; parent handles the actual export. */
   onExport: (options: ExportOptions) => void;
 }
 
-// PDF is wired in Turn 12; for now the button is disabled.
 const PDF_ENABLED = false;
 
 export const ExportModal = ({
@@ -75,18 +57,9 @@ export const ExportModal = ({
   };
 
   const handleSubmit = () => {
-    // Preserve declaration order regardless of toggle sequence —
-    // ALL_EXPORT_COLUMNS is the canonical ordering used by writers.
     const orderedColumns = ALL_EXPORT_COLUMNS.filter((c) => columns.has(c));
     if (orderedColumns.length === 0) return;
-    onExport({
-      format,
-      grouping,
-      columns: orderedColumns,
-      scopeLabel,
-      scopeSlug,
-      filtersSummary,
-    });
+    onExport({ format, grouping, columns: orderedColumns, scopeLabel, scopeSlug, filtersSummary });
   };
 
   const canExport = columns.size > 0 && rowCount > 0;
@@ -98,27 +71,15 @@ export const ExportModal = ({
           <DialogTitle className="text-lg">Export Allocations</DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-2 pt-1">
-              <div
-                className="rounded-md px-3 py-2 text-[13px] space-y-1"
-                style={{
-                  background: "hsl(220 14% 97%)",
-                  border: "1px solid hsl(220 13% 91%)",
-                }}
-              >
-                <div style={{ color: "hsl(220 10% 45%)" }}>
+              <div className="rounded-md px-3 py-2 text-[13px] space-y-1 bg-muted/60 border border-border">
+                <div className="text-muted-foreground">
                   Exporting{" "}
-                  <span
-                    className="font-semibold tabular-nums"
-                    style={{ color: "hsl(222 20% 15%)" }}
-                  >
+                  <span className="font-semibold tabular-nums text-foreground">
                     {rowCount}
                   </span>{" "}
                   {rowCount === 1 ? "row" : "rows"}
                 </div>
-                <div
-                  className="text-[12px]"
-                  style={{ color: "hsl(220 10% 55%)" }}
-                >
+                <div className="text-[12px] text-muted-foreground">
                   <span className="font-medium">{scopeLabel}</span>
                   {filtersSummary && (
                     <>
@@ -135,7 +96,7 @@ export const ExportModal = ({
         <div className="space-y-5 pt-2">
           {/* Format */}
           <div className="space-y-2">
-            <Label className="text-xs font-medium uppercase tracking-wider">
+            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Format
             </Label>
             <div className="grid grid-cols-3 gap-2">
@@ -166,64 +127,41 @@ export const ExportModal = ({
 
           {/* Grouping */}
           <div className="space-y-2">
-            <Label className="text-xs font-medium uppercase tracking-wider">
+            <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Grouping
             </Label>
             <div className="grid grid-cols-3 gap-2">
-              <GroupingButton
-                active={grouping === "flat"}
-                onClick={() => setGrouping("flat")}
-                label="Flat"
-                hint="One row per activity"
-              />
-              <GroupingButton
-                active={grouping === "employee"}
-                onClick={() => setGrouping("employee")}
-                label="By employee"
-                hint="Header + activities"
-              />
-              <GroupingButton
-                active={grouping === "team"}
-                onClick={() => setGrouping("team")}
-                label="By team"
-                hint="Header + activities"
-              />
+              <GroupingButton active={grouping === "flat"} onClick={() => setGrouping("flat")} label="Flat" hint="One row per activity" />
+              <GroupingButton active={grouping === "employee"} onClick={() => setGrouping("employee")} label="By employee" hint="Header + activities" />
+              <GroupingButton active={grouping === "team"} onClick={() => setGrouping("team")} label="By team" hint="Header + activities" />
             </div>
           </div>
 
           {/* Columns */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium uppercase tracking-wider">
+              <Label className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Columns
               </Label>
               <div className="flex items-center gap-2 text-[11px]">
                 <button
                   type="button"
                   onClick={() => setColumns(new Set(ALL_EXPORT_COLUMNS))}
-                  className="transition-colors"
-                  style={{ color: "hsl(224 72% 45%)" }}
+                  className="text-primary transition-colors hover:opacity-70"
                 >
                   All
                 </button>
-                <span style={{ color: "hsl(220 8% 60%)" }}>·</span>
+                <span className="text-muted-foreground/60">·</span>
                 <button
                   type="button"
                   onClick={() => setColumns(new Set())}
-                  className="transition-colors"
-                  style={{ color: "hsl(224 72% 45%)" }}
+                  className="text-primary transition-colors hover:opacity-70"
                 >
                   None
                 </button>
               </div>
             </div>
-            <div
-              className="grid grid-cols-2 gap-1.5 p-2.5 rounded-md"
-              style={{
-                background: "hsl(220 14% 97%)",
-                border: "1px solid hsl(220 13% 91%)",
-              }}
-            >
+            <div className="grid grid-cols-2 gap-1.5 p-2.5 rounded-md bg-muted/40 border border-border">
               {ALL_EXPORT_COLUMNS.map((col) => (
                 <ColumnCheckbox
                   key={col}
@@ -240,16 +178,7 @@ export const ExportModal = ({
           <Button variant="outline" onClick={onClose} size="sm">
             Cancel
           </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={!canExport}
-            size="sm"
-            style={
-              canExport
-                ? { background: "hsl(224 72% 45%)", color: "white" }
-                : undefined
-            }
-          >
+          <Button onClick={handleSubmit} disabled={!canExport} size="sm">
             Export {format.toUpperCase()}
           </Button>
         </DialogFooter>
@@ -279,24 +208,16 @@ const FormatButton = ({
     type="button"
     onClick={onClick}
     disabled={disabled}
-    className="flex flex-col items-center justify-center gap-1 p-3 rounded-md transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-    style={{
-      background: active ? "hsl(224 72% 95%)" : "hsl(0 0% 100%)",
-      border: `1px solid ${
-        active ? "hsl(224 72% 55%)" : "hsl(220 13% 88%)"
-      }`,
-      color: active ? "hsl(224 72% 30%)" : "hsl(222 20% 25%)",
-      boxShadow: active
-        ? "0 0 0 3px hsl(224 72% 92%)"
-        : "0 1px 2px 0 hsl(220 13% 90% / 0.3)",
-    }}
+    className={cn(
+      "flex flex-col items-center justify-center gap-1 p-3 rounded-md transition-all disabled:opacity-40 disabled:cursor-not-allowed border",
+      active
+        ? "bg-primary/10 border-primary text-primary ring-2 ring-primary/20"
+        : "bg-card border-border text-foreground hover:bg-muted/50",
+    )}
   >
     <Icon className="h-5 w-5" />
     <span className="text-[13px] font-semibold">{label}</span>
-    <span
-      className="text-[11px]"
-      style={{ color: active ? "hsl(224 50% 45%)" : "hsl(220 10% 50%)" }}
-    >
+    <span className={cn("text-[11px]", active ? "text-primary" : "text-muted-foreground")}>
       {hint}
     </span>
   </button>
@@ -316,20 +237,15 @@ const GroupingButton = ({
   <button
     type="button"
     onClick={onClick}
-    className="flex flex-col items-start gap-0.5 px-3 py-2 rounded-md transition-all text-left"
-    style={{
-      background: active ? "hsl(224 72% 95%)" : "hsl(0 0% 100%)",
-      border: `1px solid ${
-        active ? "hsl(224 72% 55%)" : "hsl(220 13% 88%)"
-      }`,
-      color: active ? "hsl(224 72% 30%)" : "hsl(222 20% 25%)",
-    }}
+    className={cn(
+      "flex flex-col items-start gap-0.5 px-3 py-2 rounded-md transition-all text-left border",
+      active
+        ? "bg-primary/10 border-primary text-primary"
+        : "bg-card border-border text-foreground hover:bg-muted/50",
+    )}
   >
     <span className="text-[13px] font-semibold">{label}</span>
-    <span
-      className="text-[11px]"
-      style={{ color: active ? "hsl(224 50% 45%)" : "hsl(220 10% 50%)" }}
-    >
+    <span className={cn("text-[11px]", active ? "text-primary" : "text-muted-foreground")}>
       {hint}
     </span>
   </button>
@@ -347,24 +263,15 @@ const ColumnCheckbox = ({
   <button
     type="button"
     onClick={onToggle}
-    className="flex items-center gap-2 px-2 py-1.5 rounded text-left text-[12.5px] transition-colors"
-    style={{ color: "hsl(222 20% 15%)" }}
-    onMouseEnter={(e) =>
-      (e.currentTarget.style.background = "hsl(220 14% 93%)")
-    }
-    onMouseLeave={(e) =>
-      (e.currentTarget.style.background = "transparent")
-    }
+    className="flex items-center gap-2 px-2 py-1.5 rounded text-left text-[12.5px] text-foreground transition-colors hover:bg-muted/60"
   >
     <div
-      className="w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors"
-      style={{
-        background: checked ? "hsl(224 72% 45%)" : "transparent",
-        border: checked
-          ? "1px solid hsl(224 72% 45%)"
-          : "1px solid hsl(220 13% 85%)",
-        color: "hsl(0 0% 100%)",
-      }}
+      className={cn(
+        "w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors",
+        checked
+          ? "bg-primary border border-primary text-primary-foreground"
+          : "bg-transparent border border-border",
+      )}
     >
       {checked && <Check className="h-3 w-3" strokeWidth={3} />}
     </div>

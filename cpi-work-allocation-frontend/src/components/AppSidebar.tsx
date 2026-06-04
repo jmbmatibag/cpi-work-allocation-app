@@ -188,7 +188,7 @@ const SidebarNavGroup = ({
                         states. */}
                     {needsAttention && (
                       <span
-                        className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-orange-500 ring-2 ring-sidebar"
+                        className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-destructive ring-2 ring-sidebar"
                         aria-label="Needs attention"
                       />
                     )}

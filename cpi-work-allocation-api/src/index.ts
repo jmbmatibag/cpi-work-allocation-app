@@ -3,6 +3,7 @@ import { createApp } from './app.js';
 import { startCleanupScheduler } from './lib/cleanup.js';
 import { startReminderScheduler } from './lib/reminderScheduler.js';
 import { verifySmtp } from './lib/mailer.js';
+import { SERVER_BOOT_TIME } from './lib/bootTime.js';
 
 const required = ['JWT_SECRET', 'DATABASE_URL', 'CORS_ORIGIN'] as const;
 for (const k of required) {
@@ -17,6 +18,7 @@ const port = Number(process.env.PORT) || 4000;
 
 app.listen(port, async () => {
   console.log(`API listening on http://localhost:${port}`);
+  console.log(`[auth] Server boot time: ${SERVER_BOOT_TIME} (${new Date(SERVER_BOOT_TIME * 1000).toISOString()}) — tokens issued before this moment are invalid`);
 
   // In PM2 cluster mode each worker receives a NODE_APP_INSTANCE env var
   // ('0', '1', …). Run schedulers only in the primary worker (instance 0)

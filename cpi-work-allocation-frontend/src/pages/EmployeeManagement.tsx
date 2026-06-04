@@ -79,7 +79,7 @@ const ROLE_OPTIONS: readonly UserRole[] = [
 
 const roleBadgeClass = (role: UserRole): string => {
   switch (role) {
-    case "Admin":    return "bg-amber-100 text-amber-900 border-amber-300";
+    case "Admin":    return "bg-warning/10 text-warning border-warning/30";
     case "Manager":  return "bg-primary/10 text-primary border-primary/30";
     case "Finance":  return "bg-purple-100 text-purple-800 border-purple-200";
     case "Employee": return "bg-muted text-muted-foreground";
@@ -814,7 +814,7 @@ const EmployeeManagement = () => {
         <Card>
           <CardContent className="pt-6">
             <p className="text-sm text-muted-foreground">Finance</p>
-            <p className="text-3xl font-bold text-purple-700 tabular-nums">
+            <p className="text-3xl font-bold text-muted-foreground tabular-nums">
               {counts.finance}
             </p>
           </CardContent>
@@ -950,7 +950,7 @@ const EmployeeManagement = () => {
           {/* Top of chain (managerId === null) */}
           {byManager.topOfChain.length > 0 && (
             <ManagerSection
-              headerIcon={<Crown className="h-4 w-4 text-amber-600" />}
+              headerIcon={<Crown className="h-4 w-4 text-warning" />}
               headerLabel="Top of Chain"
               headerSubtitle="No in-app manager"
               reports={byManager.topOfChain}
@@ -1442,7 +1442,7 @@ const RowActions = ({
                 disabled={emp.managerId === null}
                 className="w-full text-left text-xs px-2 py-1.5 rounded hover:bg-muted flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                <Crown className="h-3 w-3 text-amber-600 shrink-0" />
+                <Crown className="h-3 w-3 text-warning shrink-0" />
                 <span className="flex-1">Top of chain</span>
                 {emp.managerId === null && (
                   <span className="text-[10px] text-muted-foreground">

@@ -35,10 +35,10 @@ const TYPE_ICON: Record<
   AppNotification["type"],
   { icon: React.ElementType; className: string }
 > = {
-  info:    { icon: Info,          className: "text-blue-500" },
-  success: { icon: CheckCircle2,  className: "text-green-500" },
-  warning: { icon: AlertTriangle, className: "text-amber-500" },
-  error:   { icon: AlertCircle,   className: "text-red-500" },
+  info:    { icon: Info,          className: "text-info" },
+  success: { icon: CheckCircle2,  className: "text-success" },
+  warning: { icon: AlertTriangle, className: "text-warning" },
+  error:   { icon: AlertCircle,   className: "text-destructive" },
 };
 
 const NotificationBell = () => {
@@ -72,7 +72,7 @@ const NotificationBell = () => {
         >
           <Bell className="h-6 w-6" strokeWidth={1.75} />
           {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white leading-none shadow-sm">
+            <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[11px] font-bold text-destructive-foreground leading-none shadow-sm">
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}
