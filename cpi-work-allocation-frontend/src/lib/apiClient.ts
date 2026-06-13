@@ -148,6 +148,29 @@ class ApiError extends Error {
 
 export { ApiError };
 
+// localStorage keys that must survive a session-expiry wipe. The theme
+// choice is a device-level UI preference, not session state — clearing it
+// on logout/expiry is what made dark mode "reset on reload" across sessions
+// (Epic 4). Add any other device-scoped preferences here.
+const PRESERVED_LOCAL_STORAGE_KEYS = ['cpi-theme'];
+
+/**
+ * Clear localStorage on session expiry without nuking device-level UI
+ * preferences (e.g. the persisted theme). Snapshots the preserved keys,
+ * clears everything, then restores them.
+ */
+function clearLocalStoragePreservingTheme(): void {
+  const preserved: Record<string, string> = {};
+  for (const key of PRESERVED_LOCAL_STORAGE_KEYS) {
+    const value = localStorage.getItem(key);
+    if (value !== null) preserved[key] = value;
+  }
+  localStorage.clear();
+  for (const [key, value] of Object.entries(preserved)) {
+    localStorage.setItem(key, value);
+  }
+}
+
 let isRefreshing = false;
 let refreshPromise: Promise<boolean> | null = null;
 
@@ -221,7 +244,7 @@ async function request<T>(
       if (res.status === 401) {
         const PUBLIC_PATHS = ['/login', '/setup-password', '/reset-password'];
         if (!PUBLIC_PATHS.includes(window.location.pathname)) {
-          localStorage.clear();
+          clearLocalStoragePreservingTheme();
           // Fire a DOM event so the SessionExpiredModal can show a message
           // before the redirect happens. The modal owns the navigation.
           window.dispatchEvent(new CustomEvent('auth:session-expired'));
@@ -259,9 +282,11 @@ const auth = {
   login: (email: string, password: string) =>
     post<{ message: string }>('/api/auth/login', { email, password }),
 
-  // Step 2 (unchanged): exchanges the OTP for an authenticated session.
-  verifyOtp: (email: string, code: string) =>
-    post<{ user: ApiUser }>('/api/auth/verify-otp', { email, code }),
+  // Step 2: exchanges the OTP for an authenticated session. `rememberMe`
+  // (Epic 2) controls the session length — 7 days when true, the strict 10
+  // hours when false — and is decided by the checkbox on the login screen.
+  verifyOtp: (email: string, code: string, rememberMe = false) =>
+    post<{ user: ApiUser }>('/api/auth/verify-otp', { email, code, rememberMe }),
 
   // Re-issues a fresh login OTP during an in-progress sign-in. Rejects with
   // 429 (ApiError) once the per-user resend cap / hourly lockout is hit.

@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
-import { LogOut, KeyRound } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { LogOut, KeyRound, HelpCircle } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAllocations } from "@/contexts/AllocationsContext";
+import { useUnsavedChangesGuard } from "@/contexts/UnsavedChangesContext";
 import {
   Sidebar,
   SidebarContent,
@@ -39,7 +41,22 @@ const AppSidebar = () => {
   const collapsed = state === "collapsed";
   const { currentUser, logout, isApiMode } = useAuth();
   const { records } = useAllocations();
+  const { guard, isBlocked } = useUnsavedChangesGuard();
+  const navigate = useNavigate();
   const [changePwOpen, setChangePwOpen] = useState(false);
+
+  // Guard nav-link clicks: when the current page has unsaved changes, cancel
+  // the link's own navigation and route the intent through the confirmation
+  // dialog instead. When clean, let NavLink navigate normally (so modifier
+  // clicks like ⌘-click still work).
+  const handleNavClick = useCallback(
+    (e: React.MouseEvent, path: string) => {
+      if (!isBlocked()) return;
+      e.preventDefault();
+      guard(() => navigate(path));
+    },
+    [guard, isBlocked, navigate],
+  );
 
   // The sidebar never renders without a logged-in user — the
   // AuthenticatedLayout only mounts inside a ProtectedRoute. This
@@ -106,12 +123,25 @@ const AppSidebar = () => {
               routes={routes}
               collapsed={collapsed}
               attentionPaths={needsRevisionPaths}
+              onNavClick={handleNavClick}
             />
           );
         })}
       </SidebarContent>
 
       <SidebarFooter>
+        {/* Help center — available to every signed-in user. Routed outside
+            the role/group nav config, so it lives here in the footer. Styled
+            identically to the buttons below for clean alignment. */}
+        <Button
+          variant="ghost"
+          size={collapsed ? "icon" : "sm"}
+          className="w-full justify-start text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+          onClick={() => guard(() => navigate("/help"))}
+        >
+          <HelpCircle className="h-4 w-4" />
+          {!collapsed && <span className="ml-2">Help &amp; Guides</span>}
+        </Button>
         {isApiMode && (
           <Button
             variant="ghost"
@@ -127,7 +157,7 @@ const AppSidebar = () => {
           variant="ghost"
           size={collapsed ? "icon" : "sm"}
           className="w-full justify-start text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-          onClick={logout}
+          onClick={() => guard(() => logout())}
         >
           <LogOut className="h-4 w-4 transition-colors" />
           {!collapsed && <span className="ml-2 transition-colors">Sign Out</span>}
@@ -149,6 +179,12 @@ interface SidebarNavGroupProps {
    * attention" means for each route.
    */
   attentionPaths: ReadonlySet<string>;
+  /**
+   * Click handler for each nav link. Receives the event + target path so the
+   * unsaved-changes guard can cancel navigation and open the confirm dialog
+   * (see UnsavedChangesContext).
+   */
+  onNavClick: (e: React.MouseEvent, path: string) => void;
 }
 
 /**
@@ -162,6 +198,7 @@ const SidebarNavGroup = ({
   routes,
   collapsed,
   attentionPaths,
+  onNavClick,
 }: SidebarNavGroupProps) => (
   <SidebarGroup>
     <SidebarGroupLabel>{label}</SidebarGroupLabel>
@@ -176,6 +213,7 @@ const SidebarNavGroup = ({
                 <NavLink
                   to={route.path}
                   end
+                  onClick={(e) => onNavClick(e, route.path)}
                   className="relative hover:bg-sidebar-accent"
                   activeClassName="bg-sidebar-accent text-sidebar-primary font-medium"
                 >

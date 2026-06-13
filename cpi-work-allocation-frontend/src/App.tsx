@@ -19,6 +19,7 @@ import { appRoutes } from "@/routes/routeConfig";
 import Login from "@/pages/Login";
 import SetupPassword from "@/pages/SetupPassword";
 import ResetPassword from "@/pages/ResetPassword";
+import HelpGuides from "@/pages/HelpGuides";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -52,7 +53,13 @@ const queryClient = new QueryClient();
  * Workspace read from it but nothing in it reads from them.
  */
 const App = () => (
-  <ThemeProvider attribute="class" defaultTheme="light" disableTransitionOnChange>
+  <ThemeProvider
+    attribute="class"
+    defaultTheme="system"
+    enableSystem
+    storageKey="cpi-theme"
+    disableTransitionOnChange
+  >
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Sonner />
@@ -107,6 +114,17 @@ const App = () => (
                 }
               >
                 <Route index element={<RoleHomeRedirect />} />
+
+                {/* Help center — auth-only (no role gate) so every signed-in
+                    user, Admin included, can reach the centralized guides. */}
+                <Route
+                  path="/help"
+                  element={
+                    <ProtectedRoute>
+                      <HelpGuides />
+                    </ProtectedRoute>
+                  }
+                />
 
                 {appRoutes.map(({ path, element: Page, roles }) => (
                   <Route

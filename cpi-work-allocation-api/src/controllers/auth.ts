@@ -30,6 +30,9 @@ const REFRESH_COOKIE = 'refresh_token';
 // /api/auth/* endpoints. Reduces exposure compared to path:'/'.
 const REFRESH_COOKIE_PATH = '/api/auth';
 const ACCESS_TTL_MS = 10 * 60 * 60 * 1000; // 10 hours — strict single-workday limit.
+// "Remember me for 7 days" (Epic 2). Matches the refresh-token TTL so an
+// access token and its refresh token expire on the same horizon.
+const REMEMBER_ME_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const OTP_TTL_MS = 10 * 60 * 1000;
 const BCRYPT_ROUNDS = 12;
 const MAX_OTP_ATTEMPTS = 5;
@@ -57,14 +60,24 @@ function refreshCookieOptions() {
   };
 }
 
-function issueAccessCookie(res: Response, userId: string, roles: string[], sessionId: string): void {
-  const token = jwt.sign({ sub: userId, roles, sessionId }, JWT_SECRET, {
-    expiresIn: Math.floor(ACCESS_TTL_MS / 1000),
+function issueAccessCookie(
+  res: Response,
+  userId: string,
+  roles: string[],
+  sessionId: string,
+  rememberMe = false,
+): void {
+  // Remember-me tokens live for 7 days and carry a `rememberMe: true` claim.
+  // The auth middleware reads that claim to decide whether the server-boot
+  // invalidation check applies (it doesn't, for remember-me sessions).
+  const ttlMs = rememberMe ? REMEMBER_ME_TTL_MS : ACCESS_TTL_MS;
+  const token = jwt.sign({ sub: userId, roles, sessionId, rememberMe }, JWT_SECRET, {
+    expiresIn: Math.floor(ttlMs / 1000),
     algorithm: 'HS256',
   });
   res.cookie(ACCESS_COOKIE, token, {
     ...accessCookieOptions(),
-    maxAge: ACCESS_TTL_MS,
+    maxAge: ttlMs,
   });
 }
 
@@ -260,7 +273,7 @@ export async function setupPassword(req: Request, res: Response): Promise<void> 
 }
 
 export async function verifyOtp(req: Request, res: Response): Promise<void> {
-  const { email, code } = getValid(req, VerifyOtpSchema);
+  const { email, code, rememberMe } = getValid(req, VerifyOtpSchema);
 
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user) {
@@ -321,9 +334,10 @@ export async function verifyOtp(req: Request, res: Response): Promise<void> {
     data: { activeSessionId: sessionId },
   });
 
-  // Issue both cookies: short-lived access token (stateless JWT) and
-  // long-lived refresh token (opaque, stored hashed in DB).
-  issueAccessCookie(res, user.id, user.roles, sessionId);
+  // Issue both cookies: access token (stateless JWT — 10h normally, 7d when
+  // "remember me" is checked) and long-lived refresh token (opaque, stored
+  // hashed in DB; already 7d regardless).
+  issueAccessCookie(res, user.id, user.roles, sessionId, rememberMe);
   const refreshToken = await issueRefreshToken(user.id, req);
   setRefreshCookie(res, refreshToken);
 
@@ -379,7 +393,18 @@ export async function refresh(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  issueAccessCookie(res, result.userId, result.roles, sessionId);
+  // Preserve the remember-me horizon across refreshes. The old access token
+  // may already be expired, so we decode (not verify) it purely to read its
+  // `rememberMe` claim; without this a 7-day session would silently downgrade
+  // to a 10-hour one the first time its access token rotated.
+  let rememberMe = false;
+  const prevAccess: string | undefined = req.cookies?.auth_token;
+  if (prevAccess) {
+    const decodedPrev = jwt.decode(prevAccess) as { rememberMe?: boolean } | null;
+    rememberMe = decodedPrev?.rememberMe === true;
+  }
+
+  issueAccessCookie(res, result.userId, result.roles, sessionId, rememberMe);
   setRefreshCookie(res, result.newToken);
   res.json({ ok: true });
 }

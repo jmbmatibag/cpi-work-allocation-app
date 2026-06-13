@@ -24,12 +24,19 @@ export declare const LoginSchema: z.ZodObject<{
     password: z.ZodString;
 }, z.core.$strip>;
 /**
- * Step 2 of the two-step sign-in — unchanged from the OTP-only era so
- * the verifyOtp controller can keep its existing logic verbatim.
+ * Step 2 of the two-step sign-in.
+ *
+ * `rememberMe` (Epic 2) is optional and defaults to false. Because the
+ * session cookie is minted HERE (not at /login), the "Remember me for 7
+ * days" choice made on the credentials screen is carried through to this
+ * step. When true the controller signs a 7-day token (and embeds
+ * `rememberMe` in the payload so the auth middleware can exempt it from
+ * server-boot invalidation); when false it keeps the strict 10-hour token.
  */
 export declare const VerifyOtpSchema: z.ZodObject<{
     email: z.ZodString;
     code: z.ZodString;
+    rememberMe: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
 }, z.core.$strip>;
 /**
  * Body of POST /api/auth/resend-otp — re-issues a fresh login OTP during

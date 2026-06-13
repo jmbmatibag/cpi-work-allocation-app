@@ -22,6 +22,10 @@ type JwtPayload = {
   role?: string;
   // Session lock: embedded at login, must match User.activeSessionId.
   sessionId?: string;
+  // Epic 2 "Remember me": when true, this is a 7-day token that survives a
+  // server restart (exempt from the boot-invalidation check below). Absent
+  // or false on standard 10-hour tokens.
+  rememberMe?: boolean;
   iat?: number;
   exp?: number;
 };
@@ -46,7 +50,15 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
   // process started (e.g., yesterday's session after a nightly restart) is
   // instantly dead. iat is always present in our JWTs (jsonwebtoken stamps it
   // automatically when expiresIn is set).
-  if (payload.iat !== undefined && payload.iat < SERVER_BOOT_TIME) {
+  //
+  // EXCEPTION (Epic 2 "Remember me"): remember-me tokens are explicitly meant
+  // to survive restarts for up to 7 days, so they're exempt. Daily 10-hour
+  // sessions still get cleared on the next reboot.
+  if (
+    !payload.rememberMe &&
+    payload.iat !== undefined &&
+    payload.iat < SERVER_BOOT_TIME
+  ) {
     res.status(401).json({ error: 'Session invalidated by server restart. Please sign in again.' });
     return;
   }

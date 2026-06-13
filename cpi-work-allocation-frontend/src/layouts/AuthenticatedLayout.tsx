@@ -5,6 +5,7 @@ import NotificationBell from "@/components/NotificationBell";
 import DateTimeClock from "@/components/DateTimeClock";
 import { ModeToggle } from "@/components/ui/mode-toggle";
 import { useNotificationScheduler } from "@/hooks/useNotificationScheduler";
+import { UnsavedChangesProvider } from "@/contexts/UnsavedChangesContext";
 
 /**
  * The shell rendered for every authenticated page: sidebar, a compact
@@ -18,25 +19,27 @@ import { useNotificationScheduler } from "@/hooks/useNotificationScheduler";
 const AuthenticatedLayout = () => {
   useNotificationScheduler();
   return (
-    <SidebarProvider>
-      <div className="min-h-screen flex w-full">
-        <AppSidebar />
-        <div className="flex-1 flex flex-col">
-          <header className="h-12 flex items-center border-b px-4 bg-background shrink-0 no-print gap-3">
-            <SidebarTrigger className="-ml-1" />
-            <div className="flex-1" />
-            <DateTimeClock />
-            <div className="w-px h-5 bg-border" />
-            <ModeToggle />
-            <div className="w-px h-5 bg-border" />
-            <NotificationBell />
-          </header>
-          <main className="flex-1 overflow-hidden">
-            <Outlet />
-          </main>
+    <UnsavedChangesProvider>
+      <SidebarProvider>
+        <div className="min-h-screen flex w-full">
+          <AppSidebar />
+          <div className="flex-1 flex flex-col">
+            <header className="h-12 flex items-center border-b px-4 bg-background shrink-0 no-print gap-3">
+              <SidebarTrigger className="-ml-1" />
+              <div className="flex-1" />
+              <DateTimeClock />
+              <div className="w-px h-5 bg-border" />
+              <ModeToggle />
+              <div className="w-px h-5 bg-border" />
+              <NotificationBell />
+            </header>
+            <main className="flex-1 overflow-hidden">
+              <Outlet />
+            </main>
+          </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </UnsavedChangesProvider>
   );
 };
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import WorkspaceTipModal from "@/components/WorkspaceTipModal";
+import { getOnboardingGuide } from "@/lib/onboardingGuides";
 import {
   Card,
   CardContent,
@@ -218,29 +219,7 @@ const PerformanceReview = () => {
 
   return (
     <>
-    <WorkspaceTipModal
-      storageKey="hidePerformanceSummaryTip"
-      title="How to use the Performance Summary"
-      subtitle="Generate an HR-ready accomplishment matrix from your approved monthly allocations."
-      tips={[
-        {
-          heading: "Select a timeframe",
-          body: "Choose Q1–Q4, Mid-Year, or Annual. The report spans all approved allocations within that window for the selected employee.",
-        },
-        {
-          heading: "Status thresholds",
-          body: "Activities are rated Delivered (≥ 25%), On-Track (≥ 10%), or At-Risk (< 10%) based on their average allocation percentage across the period.",
-        },
-        {
-          heading: "Corroborated by journal",
-          body: "Daily journal entries are matched against each work stream to provide evidence notes alongside each accomplishment line.",
-        },
-        {
-          heading: "Print or export to PDF",
-          body: "Click \"Print / Save as PDF\" to open the browser print dialog. The report hides navigation and filters automatically for a clean output.",
-        },
-      ]}
-    />
+    <WorkspaceTipModal {...getOnboardingGuide("performance-summary")} />
     <div className="p-6 space-y-6 h-[calc(100vh-3rem)] overflow-y-auto">
       <div className="no-print space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">

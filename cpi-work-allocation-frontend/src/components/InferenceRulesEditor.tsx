@@ -314,6 +314,15 @@ const InferenceRulesEditor = () => {
             ? workTypesForParent(activeParent).map((w) => w.name)
             : [];
 
+          // A rule may carry a category that no longer exists in the taxonomy
+          // (e.g. renamed/removed BD/Marketing/Sales categories). Surface it as
+          // a selectable option so the cell renders the value instead of going
+          // blank — otherwise the Select has no matching item to label.
+          const categoryOptions =
+            rule.category && !categories.includes(rule.category)
+              ? [rule.category, ...categories]
+              : categories;
+
           return (
             <div
               key={rule.clientId}
@@ -354,10 +363,10 @@ const InferenceRulesEditor = () => {
                   onValueChange={(v) => updateDraft(rule.clientId, { category: v })}
                 >
                   <SelectTrigger className="text-sm">
-                    <SelectValue placeholder="Select..." />
+                    <SelectValue placeholder="—" />
                   </SelectTrigger>
                   <SelectContent>
-                    {categories.map((c) => (
+                    {categoryOptions.map((c) => (
                       <SelectItem key={c} value={c}>
                         {c}
                       </SelectItem>

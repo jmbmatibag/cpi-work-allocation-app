@@ -73,6 +73,7 @@ import {
   AtSign,
   Hash,
   Users,
+  FileEdit,
 } from "lucide-react";
 import { toast } from "sonner";
 import { TablePagination } from "@/components/ui/TablePagination";
@@ -180,18 +181,14 @@ const TeamHub = () => {
   // dropdown. Months are static (a manager may want to look ahead at an
   // empty month and see the empty-state messaging rather than have the
   // option silently missing).
-  // Default to the previous calendar month so managers open on the most
-  // recently completed period rather than the current in-progress one.
-  const [filterYear, setFilterYear] = useState<string>(() => {
-    const now = new Date();
-    return now.getMonth() === 0
-      ? String(now.getFullYear() - 1)
-      : String(now.getFullYear());
-  });
-  const [filterMonth, setFilterMonth] = useState<string>(() => {
-    const idx = new Date().getMonth(); // 0-based; 0 = January
-    return MONTHS[idx === 0 ? 11 : idx - 1];
-  });
+  // Default to the current calendar month so managers open on the period
+  // they're actually working in (matches what employees are submitting now).
+  const [filterYear, setFilterYear] = useState<string>(() =>
+    String(new Date().getFullYear()),
+  );
+  const [filterMonth, setFilterMonth] = useState<string>(
+    () => MONTHS[new Date().getMonth()], // 0-based; 0 = January
+  );
   const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [pendingRange, setPendingRange] = useState<DateRange | undefined>(undefined);
@@ -384,6 +381,7 @@ const TeamHub = () => {
   );
   const flagCount = flagEntries.length;
 
+  const draftCount = filteredRecords.filter((r) => r.status === "Draft").length;
   const pendingCount = filteredRecords.filter((r) => r.status === "Pending Review").length;
   const approvedCount = filteredRecords.filter((r) => r.status === "Approved").length;
   const revisionCount = filteredRecords.filter((r) => r.status === "Needs Revision").length;
@@ -694,9 +692,8 @@ const TeamHub = () => {
               size="sm"
               onClick={() => {
                 const now = new Date();
-                const prevIdx = now.getMonth() === 0 ? 11 : now.getMonth() - 1;
-                setFilterYear(now.getMonth() === 0 ? String(now.getFullYear() - 1) : String(now.getFullYear()));
-                setFilterMonth(MONTHS[prevIdx]);
+                setFilterYear(String(now.getFullYear()));
+                setFilterMonth(MONTHS[now.getMonth()]);
                 setDateRange(undefined);
               }}
               className="h-9 text-xs gap-1 text-muted-foreground"
@@ -710,8 +707,11 @@ const TeamHub = () => {
 
       {(isFiltering || dateRange?.from) && (
         <p className="text-xs text-muted-foreground -mt-3">
-          Showing {filteredRecords.length} of {records.length} submission
-          {records.length === 1 ? "" : "s"}
+          {/* Period-scoped count only. Pairing the filtered count with the
+              all-time total ("0 of 1 … for May 2026") read as contradictory,
+              so the counter now strictly reflects the selected period. */}
+          {filteredRecords.length} submission
+          {filteredRecords.length === 1 ? "" : "s"}
           {dateRange?.from
             ? ` from ${format(dateRange.from, "MMM d, yyyy")}${dateRange.to ? ` to ${format(dateRange.to, "MMM d, yyyy")}` : " onwards"}`
             : `${filterMonth !== ALL_MONTHS ? ` for ${filterMonth}` : ""} ${filterYear}`}
@@ -720,7 +720,16 @@ const TeamHub = () => {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="flex items-center justify-between pt-6">
+            <div>
+              <p className="text-sm text-muted-foreground">Draft</p>
+              <p className="text-3xl font-bold text-muted-foreground">{draftCount}</p>
+            </div>
+            <FileEdit className="h-8 w-8 text-muted-foreground/30" />
+          </CardContent>
+        </Card>
         <Card>
           <CardContent className="flex items-center justify-between pt-6">
             <div>

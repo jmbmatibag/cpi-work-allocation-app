@@ -77,8 +77,11 @@ interface AuthContextType {
    * generic "Invalid email or password" message.
    */
   loginWithPassword: (email: string, password: string) => Promise<void>;
-  /** Step 2 of API login: POST /api/auth/verify-otp → sets cookie + user */
-  verifyAndLogin: (email: string, code: string) => Promise<void>;
+  /**
+   * Step 2 of API login: POST /api/auth/verify-otp → sets cookie + user.
+   * `rememberMe` (Epic 2) extends the session to 7 days when true.
+   */
+  verifyAndLogin: (email: string, code: string, rememberMe?: boolean) => Promise<void>;
 
   // ── Shared ────────────────────────────────────────────────────────
   logout: () => void;
@@ -243,8 +246,8 @@ const ApiAuthProvider = ({ children }: { children: ReactNode }) => {
     await api.auth.login(email, password);
   }, []);
 
-  const verifyAndLogin = useCallback(async (email: string, code: string) => {
-    const { user } = await api.auth.verifyOtp(email, code);
+  const verifyAndLogin = useCallback(async (email: string, code: string, rememberMe = false) => {
+    const { user } = await api.auth.verifyOtp(email, code, rememberMe);
     const mgr = employees.find((e) => e.id === user.managerId);
     const managerName = mgr
       ? `${mgr.firstName} ${mgr.lastName}`.trim()

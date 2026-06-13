@@ -235,7 +235,7 @@ export const TeamAnalytics = ({ records }: TeamAnalyticsProps) => {
 
         {slices.length === 0 ? (
           <div className="flex items-center justify-center h-[260px] text-sm text-muted-foreground">
-            No data at this level.
+            No approved or in-review allocations for this period yet.
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={260}>

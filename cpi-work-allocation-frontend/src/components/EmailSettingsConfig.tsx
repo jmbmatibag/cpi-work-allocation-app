@@ -46,10 +46,7 @@ const EmailSettingsConfig = () => {
   };
 
   return (
-    <div
-      className="rounded-xl p-6"
-      style={{ background: "hsl(0 0% 100%)", border: "1px solid hsl(220 13% 91%)" }}
-    >
+    <div className="rounded-xl p-6 bg-card text-card-foreground border border-border">
       <div className="flex items-center gap-2 mb-6">
         <Mail className="h-5 w-5 text-muted-foreground" />
         <h2 className="text-base font-semibold">Outlook Email Configuration</h2>

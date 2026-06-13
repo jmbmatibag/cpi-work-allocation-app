@@ -19,6 +19,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useJournal } from "@/contexts/JournalContext";
 import type { TimeBlock } from "@/contexts/JournalContext";
 import { useClientsConfig } from "@/contexts/ClientsConfigContext";
+import { useUnsavedChangesGuard } from "@/contexts/UnsavedChangesContext";
 import {
   useTagAutocomplete,
   type AutocompleteItem,
@@ -32,6 +33,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import WorkspaceTipModal from "@/components/WorkspaceTipModal";
+import { getOnboardingGuide } from "@/lib/onboardingGuides";
 import { buildHighlightRegex, renderTagged } from "@/lib/tagHighlight";
 import {
   Save,
@@ -115,6 +117,36 @@ function consolidateContent(content: string): string[] {
   }
 
   return result;
+}
+
+// ── Draft caching (Epic 1) ─────────────────────────────────────────────────────
+//
+// Unsaved journal edits are mirrored to localStorage on every keystroke so a
+// tab close, refresh, or accidental navigation doesn't lose work. Drafts are
+// namespaced per employee + date — the journal is a per-day document, so a
+// single global "dailyLogDraft" key would clobber across days. The key is
+// removed the moment the entry is saved (editor goes clean) so a stale draft
+// never shadows the saved content.
+
+const DRAFT_KEY_PREFIX = "dailyLogDraft";
+
+const draftKeyFor = (employeeId: string, dateKey: string) =>
+  `${DRAFT_KEY_PREFIX}:${employeeId}:${dateKey}`;
+
+/** Read a persisted draft for a given employee+date, or null if none/invalid. */
+function readDraftTexts(employeeId: string, dateKey: string): string[] | null {
+  try {
+    const raw = localStorage.getItem(draftKeyFor(employeeId, dateKey));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every((t) => typeof t === "string")) {
+      return parsed as string[];
+    }
+    return null;
+  } catch {
+    // Malformed JSON (hand-edited storage / partial write) — ignore it.
+    return null;
+  }
 }
 
 // ── Tag extraction ────────────────────────────────────────────────────────────
@@ -512,6 +544,7 @@ const DailyJournal = () => {
   const { currentUser } = useAuth();
   const { getEntry, saveEntry, getDatesWithEntries } = useJournal();
   const { mainCategories, subCategories, clients } = useClientsConfig();
+  const { setGuard } = useUnsavedChangesGuard();
 
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const employeeId = currentUser?.id ?? "";
@@ -540,8 +573,27 @@ const DailyJournal = () => {
     [],
   );
 
+  // Build the editor rows for a day, preferring a persisted draft over the
+  // saved entry when the two diverge. An identical draft is ignored so it
+  // doesn't spuriously mark the editor dirty (Epic 1 draft restore).
+  const loadLinesFor = useCallback(
+    (empId: string, key: string, entryForKey: typeof entry): SmartLineInput[] => {
+      const draft = empId ? readDraftTexts(empId, key) : null;
+      const stored = entryForKey ? consolidateContent(entryForKey.content) : [];
+      if (
+        draft &&
+        draft.length > 0 &&
+        JSON.stringify(draft) !== JSON.stringify(stored)
+      ) {
+        return draft.map((text) => ({ id: crypto.randomUUID(), text }));
+      }
+      return entryToLines(entryForKey);
+    },
+    [entryToLines],
+  );
+
   const [lines, setLines] = useState<SmartLineInput[]>(() =>
-    entryToLines(entry),
+    loadLinesFor(employeeId, dateKey, entry),
   );
   const [focusId, setFocusId] = useState<string | null>(null);
 
@@ -562,6 +614,64 @@ const DailyJournal = () => {
     if (!isDirty) setLines(entryToLines(entry));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storedJson]);
+
+  // ── Draft persistence (Epic 1) ───────────────────────────────────────
+  // Mirror the editor to localStorage on every change while dirty; clear
+  // the key the moment the editor goes clean (a successful save updates
+  // the stored entry, which flips isDirty to false and triggers removal).
+  useEffect(() => {
+    if (!employeeId) return;
+    const key = draftKeyFor(employeeId, dateKey);
+    if (isDirty) {
+      localStorage.setItem(key, linesJson);
+    } else {
+      localStorage.removeItem(key);
+    }
+  }, [isDirty, linesJson, employeeId, dateKey]);
+
+  // ── Browser navigation guard (Epic 1) ────────────────────────────────
+  // Native beforeunload prompt on tab close / refresh while there are
+  // unsaved changes. This is the critical guard — it's the only one that
+  // can protect against an accidental window close. The draft above is the
+  // safety net if the user dismisses it and leaves anyway.
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Legacy requirement: some browsers only show the prompt if
+      // returnValue is set to a (now-ignored) string.
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  // ── In-app navigation guard (Epic 1) ─────────────────────────────────
+  // Register dirtiness with the shared guard so sidebar links (and Sign
+  // Out) prompt before navigating away. Clear it on unmount so leaving the
+  // page legitimately doesn't leave a stale guard armed.
+  useEffect(() => {
+    setGuard(
+      isDirty,
+      "This day's journal entry hasn't been saved yet. Your draft is kept in this browser, but it won't be submitted until you click Save Entry.",
+    );
+    return () => setGuard(false);
+  }, [isDirty, setGuard]);
+
+  // ── One-time "draft restored" notice ─────────────────────────────────
+  // If the editor mounts already dirty, the only way that happens is a
+  // persisted draft was restored over the saved entry — let the user know.
+  const restoreNoticeShown = useRef(false);
+  useEffect(() => {
+    if (restoreNoticeShown.current) return;
+    restoreNoticeShown.current = true;
+    if (isDirty) {
+      toast.info("Draft restored", {
+        description: "We recovered unsaved changes you had for this day.",
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Autocomplete sources ─────────────────────────────────────────────
 
@@ -793,11 +903,24 @@ const DailyJournal = () => {
     if (isDirty && allLinesValid) {
       const content = lines.map((l) => l.text).filter(Boolean).join("\n");
       saveEntry(employeeId, dateKey, content, derivedBlocks);
+      // Saved — the current day's draft is now redundant.
+      localStorage.removeItem(draftKeyFor(employeeId, dateKey));
     }
     setSelectedDate(date);
     const key = format(date, "yyyy-MM-dd");
     const existing = getEntry(employeeId, key);
-    setLines(entryToLines(existing));
+    // Prefer a persisted draft for the day we're switching to, if any.
+    const restored = loadLinesFor(employeeId, key, existing);
+    setLines(restored);
+    const storedTexts = existing ? consolidateContent(existing.content) : [];
+    if (
+      JSON.stringify(restored.map((l) => l.text)) !==
+      JSON.stringify(storedTexts)
+    ) {
+      toast.info("Draft restored", {
+        description: "We recovered unsaved changes you had for this day.",
+      });
+    }
   };
 
   // ── Save ─────────────────────────────────────────────────────────────
@@ -815,6 +938,8 @@ const DailyJournal = () => {
     }
     const content = lines.map((l) => l.text).filter(Boolean).join("\n");
     saveEntry(employeeId, dateKey, content, derivedBlocks);
+    // Clear the cached draft on successful submission (Epic 1).
+    localStorage.removeItem(draftKeyFor(employeeId, dateKey));
     toast.success("Journal saved", {
       description: format(selectedDate, "MMMM d, yyyy"),
     });
@@ -824,34 +949,7 @@ const DailyJournal = () => {
 
   return (
     <>
-    <WorkspaceTipModal
-      storageKey="hideDailyLogTip"
-      title="How to use the Daily Journal"
-      subtitle="Log your work day as natural text — no forms, no timers."
-      note="You can view these tips at any time by clicking the 'Tips' button next to the Save Entry button."
-      tips={[
-        {
-          heading: "Use tagging shortcuts",
-          body: "To ensure the system understands your log clearly, use tagging shortcuts (e.g., @ClientName and #CategoryName) when logging a project or client.",
-        },
-        {
-          heading: "Timeline entries",
-          body: 'Start a line with a time like "9:17am @ClientName #CategoryName – description" to record a timed block. Use @ for clients and # for categories.',
-        },
-        {
-          heading: "Range entries",
-          body: 'Write "9:00am to 11:30am @Client #Category – task" to span a specific window. The engine converts it to a time block automatically.',
-        },
-        {
-          heading: "Multi-line continuation",
-          body: "Lines without a timestamp extend the previous timed block. Great for listing sub-tasks under one work window.",
-        },
-        {
-          heading: "Auto-inference",
-          body: "Unrecognised @tags and #tags are flagged with a warning badge. An admin can map them in Settings so future entries resolve correctly.",
-        },
-      ]}
-    />
+    <WorkspaceTipModal {...getOnboardingGuide("daily-journal")} />
     <div className="flex h-[calc(100vh-3rem)] overflow-hidden">
       {/* ── Left: Calendar sidebar ── */}
       <div className="w-[340px] border-r bg-secondary/30 p-6 flex flex-col gap-4 shrink-0">

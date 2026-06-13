@@ -554,8 +554,7 @@ const Workspace = ({
           <ChevronRight className="h-8 w-8 opacity-30" />
         </div>
         <p className="text-center max-w-xs">
-          Please search your Employee ID and select a Work Period to unlock
-          your workspace.
+          Select a Work Period to unlock your workspace.
         </p>
       </div>
     );

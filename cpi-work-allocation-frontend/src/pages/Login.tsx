@@ -3,14 +3,30 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import FormError from "@/components/FormError";
 import { toast } from "sonner";
 import { Lock, Mail, ShieldCheck, ArrowLeft, Eye, EyeOff, KeyRound } from "lucide-react";
 import { sendMockOtp, verifyOtp as verifyMockOtp } from "@/lib/mockEmailService";
 import { api, ApiError } from "@/lib/apiClient";
+import { z } from "zod";
 
 // Seconds the user must wait between OTP resend requests.
 const RESEND_COOLDOWN_SECONDS = 60;
+
+// Client-side validation for the sign-in form. Field-level messages are shown
+// inline beneath each input so the user knows exactly what to fix before any
+// API call fires.
+const emailSchema = z
+  .string()
+  .trim()
+  .min(1, "Please enter your email address.")
+  .email("Please enter a valid email address.");
+
+const credentialsSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(1, "Please enter your password."),
+});
 
 // ── Two-step sign-in. One component for all modes ─────────────────────────────
 //
@@ -31,11 +47,18 @@ const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
+  // "Remember me for 7 days" (Epic 2). Chosen on the credentials step but
+  // consumed at OTP verification, since that's where the session cookie is
+  // minted. Persists across the credentials → OTP step transition.
+  const [rememberMe, setRememberMe] = useState(false);
   const [step, setStep] = useState<LoginStep>("credentials");
   const [otp, setOtp] = useState("");
   const [otpError, setOtpError] = useState("");
   const [credError, setCredError] = useState<string | null>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotError, setForgotError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // ── Resend-OTP cooldown + state ───────────────────────────────────────────
@@ -68,10 +91,17 @@ const Login = () => {
   // ── Step 1: Credentials ───────────────────────────────────────────────────
 
   const handleCredentialsSubmit = async () => {
-    if (!email || !password) {
-      toast.error("Please enter both email and password.");
+    // Validate client-side first and surface inline field errors. The form
+    // never fires an API call while any field is invalid.
+    const parsed = credentialsSchema.safeParse({ email, password });
+    if (!parsed.success) {
+      const fieldErrors = parsed.error.flatten().fieldErrors;
+      setEmailError(fieldErrors.email?.[0] ?? null);
+      setPasswordError(fieldErrors.password?.[0] ?? null);
       return;
     }
+    setEmailError(null);
+    setPasswordError(null);
 
     if (isApiMode) {
       setIsSubmitting(true);
@@ -119,7 +149,7 @@ const Login = () => {
 
     if (isApiMode) {
       try {
-        await verifyAndLogin(email, otp);
+        await verifyAndLogin(email, otp, rememberMe);
         toast.success("Welcome back!");
       } catch (err) {
         const msg =
@@ -181,10 +211,14 @@ const Login = () => {
   // ── Forgot password (API mode only) ──────────────────────────────────────
 
   const handleForgotSubmit = async () => {
-    if (!forgotEmail) {
-      toast.error("Please enter your email address.");
+    // Validate the email client-side before hitting the API, so an empty or
+    // malformed address never produces a 400 + generic toast.
+    const parsed = emailSchema.safeParse(forgotEmail);
+    if (!parsed.success) {
+      setForgotError(parsed.error.issues[0]?.message ?? "Please enter a valid email address.");
       return;
     }
+    setForgotError(null);
 
     setIsSubmitting(true);
     try {
@@ -192,17 +226,21 @@ const Login = () => {
       setStep("forgotSent");
     } catch {
       // The endpoint always returns 200 so network errors are the only failure.
-      toast.error("Something went wrong. Please try again.");
+      setForgotError("Something went wrong. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleBack = () => {
+    // Clear any stale toasts so an error from a prior view (e.g. forgot
+    // password) doesn't linger on the sign-in screen.
+    toast.dismiss();
     setStep("credentials");
     setOtp("");
     setOtpError("");
     setResendError("");
+    setForgotError(null);
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -248,14 +286,18 @@ const Login = () => {
                   <Input
                     placeholder="you@cpi.com.ph"
                     value={email}
-                    onChange={(e) => { setEmail(e.target.value); setCredError(null); }}
+                    onChange={(e) => { setEmail(e.target.value); setCredError(null); setEmailError(null); }}
                     onKeyDown={(e) =>
                       e.key === "Enter" && !isSubmitting && handleCredentialsSubmit()
                     }
+                    aria-invalid={!!emailError}
                     className="pl-10"
                     autoComplete="email"
                   />
                 </div>
+                {emailError && (
+                  <p className="text-sm font-medium text-destructive">{emailError}</p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -266,10 +308,11 @@ const Login = () => {
                     type={showPw ? "text" : "password"}
                     placeholder="••••••••"
                     value={password}
-                    onChange={(e) => { setPassword(e.target.value); setCredError(null); }}
+                    onChange={(e) => { setPassword(e.target.value); setCredError(null); setPasswordError(null); }}
                     onKeyDown={(e) =>
                       e.key === "Enter" && !isSubmitting && handleCredentialsSubmit()
                     }
+                    aria-invalid={!!passwordError}
                     className="pl-10 pr-10"
                     autoComplete="current-password"
                   />
@@ -282,6 +325,25 @@ const Login = () => {
                     {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                {passwordError && (
+                  <p className="text-sm font-medium text-destructive">{passwordError}</p>
+                )}
+              </div>
+
+              {/* Remember me — extends the session to 7 days instead of the
+                  default strict 10-hour workday limit. */}
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="remember-me"
+                  checked={rememberMe}
+                  onCheckedChange={(v) => setRememberMe(!!v)}
+                />
+                <Label
+                  htmlFor="remember-me"
+                  className="text-sm cursor-pointer select-none text-muted-foreground font-normal"
+                >
+                  Remember me for 7 days
+                </Label>
               </div>
 
               <Button
@@ -297,6 +359,7 @@ const Login = () => {
                   type="button"
                   onClick={() => {
                     setForgotEmail(email);
+                    setForgotError(null);
                     setStep("forgot");
                   }}
                   className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors w-full justify-center"
@@ -389,6 +452,8 @@ const Login = () => {
                 link to reset your password.
               </p>
 
+              <FormError message={forgotError} />
+
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Email</Label>
                 <div className="relative">
@@ -396,10 +461,11 @@ const Login = () => {
                   <Input
                     placeholder="you@cpi.com.ph"
                     value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
+                    onChange={(e) => { setForgotEmail(e.target.value); setForgotError(null); }}
                     onKeyDown={(e) =>
                       e.key === "Enter" && !isSubmitting && handleForgotSubmit()
                     }
+                    aria-invalid={!!forgotError}
                     className="pl-10"
                     autoComplete="email"
                   />
