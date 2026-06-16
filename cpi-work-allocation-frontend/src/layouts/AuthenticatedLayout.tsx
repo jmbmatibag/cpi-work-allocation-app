@@ -21,9 +21,9 @@ const AuthenticatedLayout = () => {
   return (
     <UnsavedChangesProvider>
       <SidebarProvider>
-        <div className="min-h-screen flex w-full">
+        <div className="h-screen overflow-hidden flex w-full">
           <AppSidebar />
-          <div className="flex-1 flex flex-col">
+          <div className="flex-1 flex flex-col min-w-0">
             <header className="h-12 flex items-center border-b px-4 bg-background shrink-0 no-print gap-3">
               <SidebarTrigger className="-ml-1" />
               <div className="flex-1" />
@@ -33,7 +33,7 @@ const AuthenticatedLayout = () => {
               <div className="w-px h-5 bg-border" />
               <NotificationBell />
             </header>
-            <main className="flex-1 overflow-hidden">
+            <main className="flex-1 overflow-hidden min-h-0">
               <Outlet />
             </main>
           </div>

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   useEmployees,
   type Employee,
@@ -11,14 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
-import {
-  parseEmployeeCsv,
-  validateRows,
-  orderForImport,
-  CSV_TEMPLATE,
-  CSV_HEADERS,
-  type ValidatedRow,
-} from "@/lib/csvImport";
+import { ImportEmployeesDialog } from "@/components/ImportEmployeesDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -167,18 +160,8 @@ const EmployeeManagement = () => {
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkActionPending, setBulkActionPending] = useState(false);
 
-  // --- CSV import state ---
-  // parsedRows === null   -> import dialog closed OR not parsed yet
-  // parsedRows !== null   -> preview showing validated rows
-  // importResult !== null -> result dialog showing after-the-fact counts
+  // --- CSV import (full flow lives inside ImportEmployeesDialog) ---
   const [importOpen, setImportOpen] = useState(false);
-  const [parsedRows, setParsedRows] = useState<ValidatedRow[] | null>(null);
-  const [parseError, setParseError] = useState<string | null>(null);
-  const [importResult, setImportResult] = useState<{
-    imported: number;
-    skipped: { row: ValidatedRow; reason: string }[];
-  } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isEdit = form.id !== null;
   const editingSelf = form.id === currentUser?.id;
@@ -439,184 +422,6 @@ const EmployeeManagement = () => {
       setBulkActionPending(false);
     }
   };
-
-  // --- CSV import handlers ---
-
-  /** Reset all import dialog state. Called when closing the dialog. */
-  const resetImportState = () => {
-    setParsedRows(null);
-    setParseError(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const openImport = () => {
-    resetImportState();
-    setImportOpen(true);
-  };
-
-  const closeImport = () => {
-    setImportOpen(false);
-    resetImportState();
-  };
-
-  const handleFileSelected = (file: File | undefined) => {
-    if (!file) return;
-    setParseError(null);
-    setParsedRows(null);
-
-    const reader = new FileReader();
-    reader.onerror = () => {
-      setParseError("Couldn't read the file. Try again or pick a different one.");
-    };
-    reader.onload = (e) => {
-      const text = (e.target?.result as string) ?? "";
-      const parseResult = parseEmployeeCsv(text);
-      if (!parseResult.ok) {
-        setParseError(parseResult.error.message);
-        return;
-      }
-      const validated = validateRows(parseResult.parsed, {
-        existingEmployees: employees,
-        validTeams: teams,
-      });
-      setParsedRows(validated);
-    };
-    reader.readAsText(file);
-  };
-
-  /**
-   * Execute the import.
-   *
-   * Strategy: loop rows in manager-first order (orderForImport).
-   * For each valid row, resolve managerEmail against the LIVE
-   * directory at the moment of insertion — this is the key that
-   * makes "new manager + reports in same CSV" work. The manager
-   * row is processed first and gets an id; by the time the report
-   * row is processed, `employees` has been updated and findByEmail
-   * resolves correctly.
-   *
-   * Actually — `employees` is a snapshot from useContext at render
-   * time. It doesn't update within this loop. We need to read from
-   * the context's getter INSIDE the loop. That means using
-   * findByEmail, which IS a context method that queries the
-   * current state. After each successful addEmployee, findByEmail
-   * on the next iteration sees the updated state because React
-   * re-renders... but this function runs synchronously within one
-   * render.
-   *
-   * For this to work we need findByEmail to read from a ref-like
-   * always-current source, not a captured closure. Good news: the
-   * context's useCallback depends on `employees`, so on every
-   * render a new findByEmail closure is made. BAD news: this whole
-   * handler runs within a single render cycle, so findByEmail is
-   * pinned to the initial `employees` snapshot.
-   *
-   * Resolution: maintain a local "emailToId" map updated as we go.
-   */
-  const runImport = async () => {
-    if (!parsedRows) return;
-
-    const validRows = parsedRows.filter((r) => r.input);
-    const ordered = orderForImport(validRows);
-
-    // Seed local lookup with existing directory so rows pointing
-    // at existing managers resolve without needing them in the batch.
-    const liveEmailToId = new Map<string, string>();
-    for (const e of employees) {
-      liveEmailToId.set(e.email.toLowerCase(), e.id);
-    }
-
-    let imported = 0;
-    const skipped: { row: ValidatedRow; reason: string }[] = [];
-
-    for (const row of ordered) {
-      if (!row.input) continue;
-
-      let managerId: string | null = null;
-      if (row.input.managerEmail) {
-        const resolved = liveEmailToId.get(
-          row.input.managerEmail.toLowerCase(),
-        );
-        if (!resolved) {
-          // A batch-created manager that wasn't imported (their own
-          // row failed). Skip the report too with a meaningful reason.
-          skipped.push({
-            row,
-            reason:
-              `Manager "${row.input.managerEmail}" wasn't created ` +
-              `(their own row failed). Fix that row and re-import.`,
-          });
-          continue;
-        }
-        managerId = resolved;
-      }
-
-      const { managerEmail: _, ...rest } = row.input;
-      const input: EmployeeInput = { ...rest, managerId };
-      // Await so API-mode failures surface as skip reasons instead of
-      // silently succeeding (the fire-and-forget bug).
-      const result = await addEmployee(input);
-      if (!result.ok) {
-        skipped.push({ row, reason: result.message });
-        continue;
-      }
-      imported++;
-
-      // Update local lookup so subsequent rows can reference this
-      // employee (e.g. a new manager created earlier in the batch).
-      // The id isn't surfaced by addEmployee's return value, so we
-      // look it up via the email we just inserted.
-      //
-      // Safety: findByEmail might not see the new row until next
-      // render — use a stopgap: scan `employees` + the count of
-      // successful inserts so far. Simpler: skip storing locally
-      // and rely on the post-render state. But we're in one sync
-      // pass, so we need to track. Hack: read from the context
-      // hook? No — same closure problem.
-      //
-      // Accepted solution: the id pattern is deterministic —
-      // prefix + padded(max+1). Reconstruct it by inspecting all
-      // known employees (directory + the ones we've inserted so
-      // far). Too fragile.
-      //
-      // Pragmatic solution: reports whose manager is a batch-new
-      // row will resolve correctly because the orderForImport puts
-      // managers first — their context insert happens first in
-      // this loop. But findByEmail is closed over the stale
-      // employees snapshot, so we can't use it here. Instead, we
-      // add a *sentinel* entry to liveEmailToId pointing at a
-      // placeholder. This is wrong.
-      //
-      // Real fix: grow liveEmailToId with what we just inserted
-      // using the id the context would have picked. Since we can't
-      // predict the id, we skip the local cache update. Reports
-      // referencing a batch-new manager will get managerId=null
-      // instead of the right id. That's OK — the next import pass
-      // (user re-uploading the same CSV minus the already-imported
-      // manager) would resolve correctly. But it's a worse UX.
-      //
-      // After all that: the cleanest frontend-only fix is to call
-      // into the directory's latest state synchronously. I'll add
-      // a local tracker that re-reads from `useEmployees` hook via
-      // a ref. See below — the actual implementation uses a simpler
-      // approach: capture the ref at start, update after insert.
-    }
-
-    setImportResult({ imported, skipped });
-    resetImportState();
-  };
-
-  const downloadTemplate = () => {
-    const blob = new Blob([CSV_TEMPLATE], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "employees-template.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const closeResult = () => setImportResult(null);
 
   // Multi-role: each KPI counts users whose role set INCLUDES that
   // role, so a [Admin, Manager, Employee] user is counted in all
@@ -1182,6 +987,13 @@ const EmployeeManagement = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* CSV import — two-stage (analyze -> SSE execute) */}
+      <ImportEmployeesDialog
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onComplete={() => qc.invalidateQueries({ queryKey: ["employees"] })}
+      />
 
       {/* Bulk delete confirm dialog */}
       <Dialog open={bulkDeleteOpen} onOpenChange={(o) => !o && setBulkDeleteOpen(false)}>

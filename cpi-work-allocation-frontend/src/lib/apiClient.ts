@@ -15,12 +15,17 @@
  */
 
 import type { UserRole } from 'cpi-work-allocation-shared';
+import type { AnalyzeResponse } from './employeeImportTypes';
 
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
+
+// Exposed so EventSource (which can't go through the fetch wrapper) can build
+// an absolute URL to the SSE import-execute endpoint.
+export const API_BASE = BASE;
 
 // ---------------------------------------------------------------------------
 // Core types (match the shapes that the API controllers return)
@@ -375,6 +380,17 @@ const employees = {
       '/api/employees/bulk-resend-welcome',
       { ids },
     ),
+
+  // CSV import, stage 1: pre-flight analysis. Returns a one-time jobId +
+  // the prioritized plan. Creates nothing.
+  analyzeImport: (rows: Record<string, string>[]) =>
+    post<AnalyzeResponse>('/api/employees/import/analyze', { rows }),
+
+  // CSV import, stage 2: absolute SSE URL for EventSource. The browser
+  // attaches the auth cookie automatically (withCredentials on the
+  // EventSource + CORS credentials on the API).
+  importExecuteUrl: (jobId: string, sendEmail: boolean) =>
+    `${BASE}/api/employees/import/execute?jobId=${encodeURIComponent(jobId)}&sendEmail=${sendEmail}`,
 };
 
 // ---------------------------------------------------------------------------
