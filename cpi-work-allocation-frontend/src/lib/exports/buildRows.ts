@@ -11,7 +11,7 @@ import type {
  *
  * Empty-kind rows (employees with no submission for the period) are
  * filtered out of exports by default — Finance rarely wants "no data"
- * placeholders in a CSV. If we want them later, add a toggle.
+ * placeholders in a CSV.
  */
 export interface SourceActivityRow {
   kind: "activity";
@@ -44,27 +44,25 @@ export type SourceRow = SourceActivityRow | SourceEmptyRow;
  *
  * Grouping behavior:
  *   - "flat": one data row per activity. No headers.
- *   - "employee": activities grouped by (employeeId, employeeName).
- *     Each group preceded by a group_header row. Groups sorted by
- *     employee name ascending.
- *   - "team": activities grouped by team. Same pattern.
+ *   - "employee": activities grouped by employee. Each group preceded
+ *     by a group_header row. Groups sorted by employee name ascending.
+ *   - "team": two-level hierarchy — team_header → employee_subheader →
+ *     data rows. Finance-spec format:
+ *       Header 1:  [Team] — N Activities  (no percentage)
+ *       Sub-Header: [Employee] — N Activities — X%
+ *       Data rows: individual activity entries
  *
- * A single "total" row always closes the stream so writers can
- * emit the grand total without recalculating.
+ * Grand Total rows are not emitted (removed per Finance spec).
  */
 export function buildExportRows(
   sourceRows: readonly SourceRow[],
   grouping: ExportGrouping,
   columns: readonly ExportColumn[],
 ): ExportRow[] {
-  // Filter to activity rows — exports don't include "Not Submitted"
-  // placeholders. Empty rows are a UI construct.
   const activities = sourceRows.filter(
     (r): r is SourceActivityRow => r.kind === "activity",
   );
 
-  // Build a single data row from one activity, including only the
-  // selected columns.
   const toDataRow = (a: SourceActivityRow): ExportRow => {
     const cells = {} as Record<ExportColumn, string | number>;
     for (const col of columns) {
@@ -89,49 +87,59 @@ export function buildExportRows(
 
   if (grouping === "flat") {
     for (const a of activities) out.push(toDataRow(a));
-  } else {
-    // Groupable key and display label per grouping mode.
-    const keyFor = (a: SourceActivityRow): string =>
-      grouping === "employee" ? `${a.employeeId}::${a.employeeName}` : a.team;
-    const labelFor = (a: SourceActivityRow): string =>
-      grouping === "employee" ? a.employeeName : `Team: ${a.team}`;
-
-    // Preserve insertion order via Map; sort group keys after grouping.
+  } else if (grouping === "employee") {
     const buckets = new Map<string, SourceActivityRow[]>();
     for (const a of activities) {
-      const k = keyFor(a);
+      const k = `${a.employeeId}::${a.employeeName}`;
       if (!buckets.has(k)) buckets.set(k, []);
       buckets.get(k)!.push(a);
     }
-
-    // Sort group keys by display label for consistent output.
     const sortedKeys = [...buckets.keys()].sort((a, b) => {
-      const ra = buckets.get(a)!;
-      const rb = buckets.get(b)!;
-      return labelFor(ra[0]).localeCompare(labelFor(rb[0]));
+      return buckets.get(a)![0].employeeName.localeCompare(
+        buckets.get(b)![0].employeeName,
+      );
     });
-
     for (const key of sortedKeys) {
       const group = buckets.get(key)!;
-      const total = group.reduce((s, a) => s + a.percentage, 0);
-      out.push({
-        _kind: "group_header",
-        label: labelFor(group[0]),
-        total: round2(total),
-        count: group.length,
-      });
+      const total = round2(group.reduce((s, a) => s + a.percentage, 0));
+      out.push({ _kind: "group_header", label: group[0].employeeName, total, count: group.length });
       for (const a of group) out.push(toDataRow(a));
     }
-  }
+  } else {
+    // "team" — two-level: team_header → employee_subheader → data rows
+    const teamMap = new Map<string, Map<string, SourceActivityRow[]>>();
+    for (const a of activities) {
+      if (!teamMap.has(a.team)) teamMap.set(a.team, new Map());
+      const empKey = `${a.employeeId}::${a.employeeName}`;
+      const empMap = teamMap.get(a.team)!;
+      if (!empMap.has(empKey)) empMap.set(empKey, []);
+      empMap.get(empKey)!.push(a);
+    }
 
-  // Grand total regardless of grouping.
-  const grandTotal = activities.reduce((s, a) => s + a.percentage, 0);
-  out.push({
-    _kind: "total",
-    label: "Grand Total",
-    total: round2(grandTotal),
-    count: activities.length,
-  });
+    const sortedTeams = [...teamMap.keys()].sort((a, b) => a.localeCompare(b));
+    for (const team of sortedTeams) {
+      const empMap = teamMap.get(team)!;
+      const teamCount = [...empMap.values()].reduce((s, arr) => s + arr.length, 0);
+      out.push({ _kind: "team_header", label: team, count: teamCount });
+
+      const sortedEmpKeys = [...empMap.keys()].sort((a, b) => {
+        return empMap.get(a)![0].employeeName.localeCompare(
+          empMap.get(b)![0].employeeName,
+        );
+      });
+      for (const empKey of sortedEmpKeys) {
+        const empActivities = empMap.get(empKey)!;
+        const empTotal = round2(empActivities.reduce((s, a) => s + a.percentage, 0));
+        out.push({
+          _kind: "employee_subheader",
+          label: empActivities[0].employeeName,
+          count: empActivities.length,
+          total: empTotal,
+        });
+        for (const a of empActivities) out.push(toDataRow(a));
+      }
+    }
+  }
 
   return out;
 }

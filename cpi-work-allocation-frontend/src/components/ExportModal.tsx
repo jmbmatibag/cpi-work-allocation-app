@@ -30,7 +30,7 @@ export interface ExportModalProps {
   onExport: (options: ExportOptions) => void;
 }
 
-const PDF_ENABLED = false;
+const PDF_ENABLED = true;
 
 export const ExportModal = ({
   open,

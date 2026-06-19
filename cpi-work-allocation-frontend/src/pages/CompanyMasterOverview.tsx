@@ -33,6 +33,7 @@ import { ExportModal } from "@/components/ExportModal";
 import { buildExportRows } from "@/lib/exports/buildRows";
 import { exportToCsv } from "@/lib/exports/csv";
 import { exportToXlsx } from "@/lib/exports/xlsx";
+import { exportToPdf } from "@/lib/exports/pdf";
 import type { ExportOptions } from "@/lib/exports/types";
 
 /**
@@ -243,8 +244,19 @@ const CompanyMasterOverview = () => {
 
   useEffect(() => { setPage(1); }, [filterTeam, filterManager, filterStatus, search, month, year]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // When "All Statuses" is selected, hide "Not Submitted" rows from the table.
+  // They still count toward KPIs so the summary cards stay accurate.
+  // Explicitly filtering by "Not Submitted" in the dropdown still shows them.
+  const visibleRows = useMemo(
+    () =>
+      filterStatus === "all"
+        ? filtered.filter((r) => r.kind !== "empty")
+        : filtered,
+    [filtered, filterStatus],
+  );
+
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
+  const paginated = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // KPIs — count distinct employees, not rows (employees with many
   // activities shouldn't inflate the counts).
@@ -334,9 +346,9 @@ const CompanyMasterOverview = () => {
           extension = "xlsx";
           break;
         case "pdf":
-          // Wired in Turn 12. Modal disables the button until then.
-          toast.error("PDF export coming in a future update.");
-          return;
+          blob = await exportToPdf(options, rows);
+          extension = "pdf";
+          break;
       }
 
       const url = URL.createObjectURL(blob);

@@ -118,19 +118,26 @@ export type ExportRow =
     }
   | {
       _kind: "group_header";
-      /** Label for the header — "Team: IT/Platforms" or employee name. */
+      /** Label for employee grouping header (employee name). */
       label: string;
-      /** Total percentage for this group (sum of its data rows). */
+      /** Total percentage for this group. */
       total: number;
       /** Count of data rows in this group. */
       count: number;
     }
   | {
-      _kind: "total";
-      /** Label like "Total" or "Grand Total". */
+      _kind: "team_header";
+      /** Team name. Shown as "[Team] — N Activities" with no percentage. */
       label: string;
-      /** Sum of percentages across all data rows. */
-      total: number;
-      /** Count of data rows. */
+      /** Total activity count across all employees in this team. */
       count: number;
+    }
+  | {
+      _kind: "employee_subheader";
+      /** Employee name. Shown within a team block as "[Name] — N Activities — X%". */
+      label: string;
+      /** Activity count for this employee. */
+      count: number;
+      /** Sum of percentages for this employee's activities. */
+      total: number;
     };
