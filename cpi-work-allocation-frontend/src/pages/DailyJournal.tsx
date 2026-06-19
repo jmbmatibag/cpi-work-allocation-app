@@ -47,6 +47,8 @@ import {
   Trash2,
   LogOut,
   Lightbulb,
+  Copy,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -596,6 +598,7 @@ const DailyJournal = () => {
     loadLinesFor(employeeId, dateKey, entry),
   );
   const [focusId, setFocusId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // isDirty compares current editor lines against what was last saved.
   // Must mirror the entryToLines logic above — both sides are the
@@ -923,6 +926,17 @@ const DailyJournal = () => {
     }
   };
 
+  // ── Copy raw ─────────────────────────────────────────────────────────
+
+  const handleCopyRaw = useCallback(() => {
+    if (!combinedText.trim()) return;
+    navigator.clipboard.writeText(combinedText).then(() => {
+      setCopied(true);
+      toast.success("Copied to clipboard");
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [combinedText]);
+
   // ── Save ─────────────────────────────────────────────────────────────
 
   const handleSave = () => {
@@ -1104,6 +1118,29 @@ const DailyJournal = () => {
               {derivedBlocks.length} timed{" "}
               {derivedBlocks.length === 1 ? "entry" : "entries"}
             </span>
+            <div className="ml-auto flex items-center">
+              <div className="shrink-0 flex items-center ml-2 min-w-[52px] justify-end">
+                <TooltipProvider delayDuration={150}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={handleCopyRaw}
+                        className="flex items-center gap-1 text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+                      >
+                        {copied ? (
+                          <Check className="h-3.5 w-3.5 text-green-500" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                        {copied ? "Copied!" : "Copy"}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">Copy raw journal text</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+              <div className="ml-1.5 w-7 shrink-0" aria-hidden="true" />
+            </div>
           </div>
         )}
 
@@ -1112,7 +1149,7 @@ const DailyJournal = () => {
           {lines.length === 0 ? (
             <EmptyState onAdd={() => addLine()} />
           ) : (
-            <div className="max-w-3xl">
+            <div>
               {resolvedLines.map((rl, i) => (
                 <SmartJournalLine
                   key={rl.id}
