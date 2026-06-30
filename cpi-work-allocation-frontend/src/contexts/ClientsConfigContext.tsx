@@ -1049,6 +1049,28 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
   const setWorkTypeParentsMut = useMutation({
     mutationFn: ({ id, parents }: { id: number; parents: string[] }) =>
       api.settings.setWorkTypeParents(id, parents),
+    // Optimistically patch the query cache so the Outline re-renders
+    // immediately — without this the node stays visible until the API
+    // round-trip + background refetch complete (~300–500 ms).
+    onMutate: async ({ id, parents }) => {
+      await queryClient.cancelQueries({ queryKey: ["settings"] });
+      const previous = queryClient.getQueryData(["settings"]);
+      queryClient.setQueryData(["settings"], (old: unknown) => {
+        const data = old as { workTypes?: Array<{ id: number; name: string; parents: string[] }> } | undefined;
+        if (!data?.workTypes) return old;
+        return {
+          ...data,
+          workTypes: data.workTypes.map((w) =>
+            w.id === id ? { ...w, parents } : w,
+          ),
+        };
+      });
+      return { previous };
+    },
+    onError: (_err, _vars, context: { previous: unknown } | undefined) => {
+      if (context?.previous)
+        queryClient.setQueryData(["settings"], context.previous);
+    },
     onSuccess: (data) => {
       invalidate();
       if (data.generatedRules.length > 0)

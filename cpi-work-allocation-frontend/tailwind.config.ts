@@ -52,10 +52,19 @@ export default {
         "scale-in": { from: { opacity: "0", transform: "scale(0.95)" }, to: { opacity: "1", transform: "scale(1)" } },
       },
       animation: {
-        "accordion-down": "accordion-down 0.2s ease-out",
-        "accordion-up": "accordion-up 0.2s ease-out",
-        "fade-in": "fade-in 0.3s ease-out",
-        "scale-in": "scale-in 0.2s ease-out",
+        // Structural expand/collapse motions — prolonged & eased for a "premium" feel.
+        "accordion-down": "accordion-down 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        "accordion-up": "accordion-up 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        "fade-in": "fade-in 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+        "scale-in": "scale-in 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
+      },
+      // Global defaults for the `transition*` utilities (was 150ms / browser ease).
+      // 200ms reads as smoother without making hovers feel laggy.
+      transitionDuration: {
+        DEFAULT: "200ms",
+      },
+      transitionTimingFunction: {
+        DEFAULT: "cubic-bezier(0.4, 0, 0.2, 1)",
       },
     },
   },

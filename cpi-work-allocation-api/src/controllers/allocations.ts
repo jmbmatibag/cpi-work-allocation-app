@@ -23,7 +23,13 @@ import {
   buildApprovalEmailText,
   buildRevisionEmailHtml,
   buildRevisionEmailText,
+  buildFinanceCompletionEmailHtml,
+  buildFinanceCompletionEmailText,
 } from '../lib/mailer.js';
+import {
+  createNotification,
+  createNotificationsForUsers,
+} from '../lib/notificationService.js';
 import {
   buildAllocationScopeFilter,
   canActOnEmployee,
@@ -279,6 +285,20 @@ export async function submit(req: AuthRequest, res: Response): Promise<void> {
   // historical managerId. The env-var fallback covers the rare
   // genuinely-top-of-chain case (CEO submits with no manager set).
   // Fire-and-forget; failures are logged.
+  // In-app notification for the live manager (the bell). Independent of the
+  // email send below — it lands even when the manager has no email on file,
+  // and is keyed to the real manager id (not the env fallback recipient).
+  if (liveManagerId) {
+    const employeeName = `${updated.employee.firstName} ${updated.employee.lastName}`;
+    void createNotification({
+      targetUserId: liveManagerId,
+      title: 'New Allocation Submission',
+      message: `${employeeName} has submitted their allocation for ${updated.month} ${updated.year}.`,
+      type: 'info',
+      actionUrl: '/team-hub',
+    });
+  }
+
   const recipient = resolveNotificationRecipient(liveManager?.email);
   if (recipient) {
     const employeeName = `${updated.employee.firstName} ${updated.employee.lastName}`;
@@ -337,6 +357,123 @@ function canManageRecord(
   return false;
 }
 
+/**
+ * Epic 3 — Automated Finance completion hook.
+ *
+ * Called fire-and-forget right after a manager approves an allocation.
+ * Checks whether that approval was the LAST outstanding one for the
+ * manager's team in this period; if so, notifies the Finance/Admin group
+ * so they can start their accounting processes.
+ *
+ * `priorStatus` is the record's status BEFORE this approval. We bail when
+ * it was already 'Approved' — re-approving an approved record must not
+ * re-fire the notification (idempotency at the trigger edge).
+ *
+ * "Team complete" means every one of the manager's direct reports has an
+ * Approved allocation for the period (100% overall progress) — NOT just that
+ * the manager's review queue is empty. Reports who never submitted (Blank)
+ * keep the team incomplete, so this fires only when the whole headcount is
+ * approved.
+ */
+async function notifyFinanceIfTeamComplete(
+  managerId: string | null,
+  managerName: string | null,
+  month: string,
+  year: string,
+  priorStatus: string,
+): Promise<void> {
+  if (!managerId) return; // top-of-chain record — no team to complete
+  if (priorStatus === 'Approved') return; // not a real Draft/Pending→Approved transition
+
+  // "Fully approved" must mean the WHOLE team is done — every person who
+  // reports to this manager has an Approved allocation for the period — NOT
+  // merely that the records which happen to exist are all approved. Counting
+  // only existing records mis-fired this notice when most of the team never
+  // submitted (Blank): one approved record looked like a cleared queue while
+  // the team's overall progress was a fraction of 100%.
+  //
+  // Headcount mirrors the Master Overview's "Overall Progress" denominator:
+  // direct reports, excluding Finance-only users (who aren't subjects of
+  // allocation review).
+  const reports = await prisma.user.findMany({
+    where: { managerId },
+    select: { id: true, roles: true },
+  });
+  const teamMemberIds = reports
+    .filter((u) => !(u.roles.length === 1 && u.roles[0] === 'Finance'))
+    .map((u) => u.id);
+  if (teamMemberIds.length === 0) return; // no team to complete
+
+  // How many of those reports have an Approved allocation for the period.
+  const approvedCount = await prisma.allocationRecord.count({
+    where: {
+      employeeId: { in: teamMemberIds },
+      month,
+      year,
+      status: 'Approved',
+    },
+  });
+
+  // Not complete until EVERY report is approved (100% overall progress).
+  if (approvedCount < teamMemberIds.length) return;
+
+  const financeUsers = await prisma.user.findMany({
+    where: { roles: { hasSome: ['Finance', 'Admin'] } },
+    select: { id: true, email: true },
+  });
+
+  const resolvedName = managerName ?? 'A manager';
+  const subject = `[CPI Allocation] ${resolvedName} fully approved ${month} ${year}`;
+  const html = buildFinanceCompletionEmailHtml(resolvedName, month, year, approvedCount);
+  const text = buildFinanceCompletionEmailText(resolvedName, month, year, approvedCount);
+
+  // In-app bell notification for the whole Finance/Admin group.
+  void createNotificationsForUsers(
+    financeUsers.map((u) => u.id),
+    {
+      title: 'Team Allocations Fully Approved',
+      message: `${resolvedName} has fully approved all Work Allocations for ${month} ${year}.`,
+      type: 'success',
+      actionUrl: '/master',
+    },
+  );
+
+  // Collect distinct recipients. NOTIFICATION_FALLBACK_EMAIL covers the
+  // case where the Finance group is empty / has no emails so the signal
+  // never silently disappears.
+  const recipients = new Set<string>();
+  for (const u of financeUsers) {
+    const r = resolveNotificationRecipient(u.email);
+    if (r) recipients.add(r);
+  }
+  if (recipients.size === 0) {
+    const fallback = resolveNotificationRecipient(null);
+    if (fallback) recipients.add(fallback);
+  }
+  if (recipients.size === 0) {
+    console.warn(
+      `[mailer] team-complete notice skipped: no Finance/Admin recipients and ` +
+      `NOTIFICATION_FALLBACK_EMAIL not set (manager ${managerId}, ${month} ${year})`,
+    );
+    return;
+  }
+
+  for (const recipient of recipients) {
+    try {
+      await sendNotificationEmail(recipient, subject, html, text);
+      console.log(
+        `[mailer] team-complete notice delivered to ${recipient} — ` +
+        `${resolvedName} approved all ${month} ${year} allocations`,
+      );
+    } catch (err) {
+      console.warn(
+        `[mailer] team-complete notice to ${recipient} failed:`,
+        (err as Error).message,
+      );
+    }
+  }
+}
+
 export async function approve(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, IdParamSchema, 'params');
 
@@ -353,6 +490,10 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
+
+  // Capture the status BEFORE the approval so the Epic 3 completion hook
+  // can tell a genuine →Approved transition from a redundant re-approval.
+  const priorStatus = record.status;
 
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.allocationRecord.update({
@@ -372,6 +513,15 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
 
   res.json(toFrontendRecord(updated));
 
+  // In-app notification for the employee whose allocation was approved.
+  void createNotification({
+    targetUserId: updated.employeeId,
+    title: 'Allocation Approved',
+    message: `Your work allocation for ${updated.month} ${updated.year} has been approved.`,
+    type: 'success',
+    actionUrl: '/allocations',
+  });
+
   // Notify the employee that their allocation was approved.
   if (updated.employee?.email) {
     const employeeName = `${updated.employee.firstName} ${updated.employee.lastName}`;
@@ -387,6 +537,25 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
       );
     });
   }
+
+  // Epic 3: if this approval cleared the manager's entire review queue for
+  // the period, tell Finance/Admin so accounting can begin. Fire-and-forget
+  // — a notification failure must never fail the approval the user just made.
+  const managerName = updated.manager
+    ? `${updated.manager.firstName} ${updated.manager.lastName}`
+    : null;
+  notifyFinanceIfTeamComplete(
+    updated.managerId,
+    managerName,
+    updated.month,
+    updated.year,
+    priorStatus,
+  ).catch((err) => {
+    console.warn(
+      `[mailer] team-complete check failed for manager ${updated.managerId}:`,
+      (err as Error).message,
+    );
+  });
 }
 
 export async function returnForRevision(req: AuthRequest, res: Response): Promise<void> {
@@ -432,6 +601,17 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
   });
 
   res.json(toFrontendRecord(updated));
+
+  // In-app notification for the employee whose allocation needs revision.
+  void createNotification({
+    targetUserId: updated.employeeId,
+    title: 'Revision Requested',
+    message:
+      `Your work allocation for ${updated.month} ${updated.year} requires changes.` +
+      (body.feedback ? ` Reason: ${body.feedback}` : ''),
+    type: 'warning',
+    actionUrl: '/allocations',
+  });
 
   // Notify the employee that their allocation needs revision.
   if (updated.employee?.email) {

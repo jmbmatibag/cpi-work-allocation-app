@@ -1,3 +1,4 @@
+import { getReportingPeriod } from 'cpi-work-allocation-shared';
 import { prisma } from './prisma.js';
 import { logAudit } from './audit.js';
 import {
@@ -52,11 +53,6 @@ import {
  * decoupled from "user happens to be logged in".
  */
 
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-] as const;
-
 const AUDIT_ENTITY = 'SystemJob';
 const AUDIT_ENTITY_ID = 'daily-reminder';
 const AUDIT_ACTION = 'run';
@@ -106,12 +102,15 @@ interface Period {
 
 /**
  * The CURRENT PERIOD is the previous calendar month — the month whose
- * allocations are now due. Handles January → December wrap.
+ * allocations are now due. Thin adapter over the shared
+ * {@link getReportingPeriod} utility (the single source of truth for the
+ * arrears rule); kept as a local name so the cron's call sites read in
+ * domain terms. Drops the `label` field the shared type carries — the
+ * cron formats its own subject lines from month+year.
  */
 export function currentPeriod(ref: Date = new Date()): Period {
-  const monthIndex = ref.getMonth() === 0 ? 11 : ref.getMonth() - 1;
-  const year = ref.getMonth() === 0 ? ref.getFullYear() - 1 : ref.getFullYear();
-  return { month: MONTH_NAMES[monthIndex], year: String(year), monthIndex };
+  const { month, year, monthIndex } = getReportingPeriod(ref);
+  return { month, year, monthIndex };
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +377,10 @@ export async function runDailyReminders(
 const TICK_MS = 60 * 60 * 1000;
 
 export function startReminderScheduler(): void {
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[reminders] scheduler disabled in non-production environment');
+    return;
+  }
   // Initial run on startup — covers the case where the server boots
   // mid-workday and would otherwise idle for an hour.
   runDailyReminders().catch((e) =>

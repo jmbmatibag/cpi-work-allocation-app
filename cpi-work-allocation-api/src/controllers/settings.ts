@@ -30,14 +30,20 @@ const STOP_WORDS = new Set([
  * Produce a keyword array for a work type name.
  * Multi-word names get the full phrase PLUS each individual non-stop-word token.
  *
- * "Product Development"  → ["product development", "product", "development"]
- * "Development"          → ["development"]
+ * "Product Development"    → ["product development", "product", "development"]
+ * "Development"            → ["development"]
+ * "Sales, Marketing & BD"  → ["sales marketing bd", "sales", "marketing", "bd"]
+ *
+ * Special characters (commas, ampersands, etc.) are stripped before
+ * tokenising so they don't embed into individual keyword tokens and
+ * then fail to match against plain-text descriptions.
  */
 function tokenizeWorkTypeName(name: string): string[] {
   const lower = name.toLowerCase();
-  if (!name.includes(' ')) return [lower];
-  const words = lower.split(/\s+/).filter((w) => w.length > 1 && !STOP_WORDS.has(w));
-  return [...new Set([lower, ...words])];
+  const clean = lower.replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean.includes(' ')) return [clean];
+  const words = clean.split(' ').filter((w) => w.length > 1 && !STOP_WORDS.has(w));
+  return [...new Set([clean, ...words])];
 }
 
 // ── Snapshot ────────────────────────────────────────────────────────────────

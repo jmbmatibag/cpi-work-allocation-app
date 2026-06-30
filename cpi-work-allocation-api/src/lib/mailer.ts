@@ -239,6 +239,102 @@ export function buildPendingReviewReminderEmailText(
   return `Hello ${managerName},\n\nYou have ${pendingCount} team work allocation${plural} pending your review for ${month} ${year}.${list}\n\nPlease log in to the CPI portal to approve or return these submissions: ${APP_URL}/team-hub\n\n— CPI Work Allocation`;
 }
 
+/**
+ * Manual overdue-allocation reminder (Epic 2). Fired by Finance from the
+ * Master Overview "Send Reminders" dialog. Unlike the automated daily
+ * `buildPendingReviewReminderEmail*`, this one is explicitly framed as an
+ * urgent, Finance-originated nudge about the manager's outstanding review
+ * queue for the period.
+ */
+export function buildManualReminderEmailHtml(
+  managerName: string,
+  month: string,
+  year: string,
+  pendingCount: number,
+): string {
+  const countPhrase =
+    pendingCount > 0
+      ? `Currently, our system shows that you have <strong>${pendingCount}</strong> employee allocation${pendingCount === 1 ? '' : 's'} pending your review and approval.`
+      : `Your team still has Work Allocations that are not yet fully approved.`;
+  return notificationHtml(
+    'Action Required: Overdue Work Allocations',
+    `Hi <strong>${managerName}</strong>,
+     <p style="margin:12px 0 0;">This is a reminder from the Finance team regarding the Work Allocations for <strong>${month} ${year}</strong>.</p>
+     <p style="margin:12px 0 0;">${countPhrase}</p>
+     <p style="margin:12px 0 0;">To ensure our billing and resource tracking remain on schedule, please log in to the CPI Work Allocation Portal as soon as possible to review and approve your team's submissions.</p>
+     <p style="margin:12px 0 0;">If your team is experiencing blockers in submitting their journals, please let Finance know immediately.</p>`,
+    'error',
+    `${APP_URL}/team-hub`,
+    'Review Team Allocations →',
+  );
+}
+
+export function buildManualReminderEmailText(
+  managerName: string,
+  month: string,
+  year: string,
+  pendingCount: number,
+): string {
+  const countLine =
+    pendingCount > 0
+      ? `Currently, our system shows that you have ${pendingCount} employee allocation${pendingCount === 1 ? '' : 's'} pending your review and approval.`
+      : `Your team still has Work Allocations that are not yet fully approved.`;
+  return [
+    `Hi ${managerName},`,
+    '',
+    `This is a reminder from the Finance team regarding the Work Allocations for ${month} ${year}.`,
+    '',
+    countLine,
+    '',
+    "To ensure our billing and resource tracking remain on schedule, please log in to the CPI Work Allocation Portal as soon as possible to review and approve your team's submissions.",
+    '',
+    `${APP_URL}/team-hub`,
+    '',
+    'If your team is experiencing blockers in submitting their journals, please let Finance know immediately.',
+    '',
+    'Thank you,',
+    'CPI Finance Team',
+  ].join('\n');
+}
+
+/**
+ * Finance completion notice (Epic 3). Fired automatically the moment a
+ * manager approves the LAST outstanding allocation for their team in a
+ * period, so Finance/Admin can begin accounting/billing for that team.
+ */
+export function buildFinanceCompletionEmailHtml(
+  managerName: string,
+  month: string,
+  year: string,
+  approvedCount: number,
+): string {
+  return notificationHtml(
+    'Team Allocations Fully Approved',
+    `<strong>${managerName}</strong> has fully approved all Work Allocations for <strong>${month} ${year}</strong>.
+     <p style="margin:12px 0 0;">All ${approvedCount} allocation${approvedCount === 1 ? '' : 's'} for this team are now approved and ready for accounting processing.</p>`,
+    'success',
+    `${APP_URL}/master`,
+    'Open Master Overview →',
+  );
+}
+
+export function buildFinanceCompletionEmailText(
+  managerName: string,
+  month: string,
+  year: string,
+  approvedCount: number,
+): string {
+  return [
+    `${managerName} has fully approved all Work Allocations for ${month} ${year}.`,
+    '',
+    `All ${approvedCount} allocation${approvedCount === 1 ? '' : 's'} for this team are now approved and ready for accounting processing.`,
+    '',
+    `View the Master Overview: ${APP_URL}/master`,
+    '',
+    '— CPI Work Allocation',
+  ].join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Password-reset email (forgot-password flow)
 // ---------------------------------------------------------------------------

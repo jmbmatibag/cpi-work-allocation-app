@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { getReportingPeriod } from "cpi-work-allocation-shared";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import { useAuth } from "@/contexts/AuthContext";
@@ -181,13 +182,15 @@ const TeamHub = () => {
   // dropdown. Months are static (a manager may want to look ahead at an
   // empty month and see the empty-state messaging rather than have the
   // option silently missing).
-  // Default to the current calendar month so managers open on the period
-  // they're actually working in (matches what employees are submitting now).
-  const [filterYear, setFilterYear] = useState<string>(() =>
-    String(new Date().getFullYear()),
+  // Reporting/Review view: default to the active reporting period (the
+  // PREVIOUS calendar month) so managers open straight onto the period
+  // they need to review and approve — the lifecycle runs in arrears, so
+  // the data awaiting action is last month's, not the current month's.
+  const [filterYear, setFilterYear] = useState<string>(
+    () => getReportingPeriod().year,
   );
   const [filterMonth, setFilterMonth] = useState<string>(
-    () => MONTHS[new Date().getMonth()], // 0-based; 0 = January
+    () => getReportingPeriod().month,
   );
   const [dateRange, setDateRange] = useState<DateRange | undefined>(undefined);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -691,9 +694,11 @@ const TeamHub = () => {
               variant="ghost"
               size="sm"
               onClick={() => {
-                const now = new Date();
-                setFilterYear(String(now.getFullYear()));
-                setFilterMonth(MONTHS[now.getMonth()]);
+                // Reset to the same default the page mounts with — the
+                // reporting period — not the current calendar month.
+                const { month, year } = getReportingPeriod();
+                setFilterYear(year);
+                setFilterMonth(month);
                 setDateRange(undefined);
               }}
               className="h-9 text-xs gap-1 text-muted-foreground"

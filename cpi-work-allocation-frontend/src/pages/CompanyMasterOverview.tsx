@@ -1,11 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { useState, useMemo } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -14,22 +8,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Building2, Search, Download, ChevronLeft, ChevronRight } from "lucide-react";
+import { Building2, Search, Download, Mail, CalendarRange } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
+import { getReportingPeriod } from "cpi-work-allocation-shared";
 import { useAllocations, MONTH_NAMES, AllocationStatus } from "@/contexts/AllocationsContext";
-import { useAuth, AppUser } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { useClientsConfig } from "@/contexts/ClientsConfigContext";
+import { api, ApiError } from "@/lib/apiClient";
 import { ExportModal } from "@/components/ExportModal";
+import {
+  SendRemindersDialog,
+  type DelinquentManager,
+} from "@/components/SendRemindersDialog";
+import {
+  ExpandableTeamGrid,
+  type TeamGroup,
+  type EmployeeDetail,
+} from "@/components/ExpandableTeamGrid";
+import { EXPORT_GROUPING_SLUGS } from "@/lib/exports/types";
 import { buildExportRows } from "@/lib/exports/buildRows";
 import { exportToCsv } from "@/lib/exports/csv";
 import { exportToXlsx } from "@/lib/exports/xlsx";
@@ -39,14 +37,15 @@ import type { ExportOptions } from "@/lib/exports/types";
 /**
  * Company Master Overview — Finance / org-wide read-only view.
  *
- * Shows every activity every employee submitted for the selected
- * month/year, joined against the employee directory so employees
- * with no record in that period show up as "Not Submitted".
+ * Redesigned as an Expandable Master-Detail Grid: a minimalist KPI header
+ * (Epic 1), Team/Manager parent rows (Epic 2), and an employee-allocation
+ * drill-down inside each expanded team (Epic 3). Replaces the old separate
+ * summary-cards + flat-table layout — the summary IS the parent row now and
+ * the raw data is one click away.
  *
- * Previously this page read from a hardcoded mockData.dashboardEmployees
- * array that had no relationship to what was actually in
- * AllocationsContext. Finance users saw made-up data. Phase I wires
- * it to the real allocation store plus the employee directory.
+ * All derivations read from the real AllocationsContext store joined against
+ * the employee directory, so employees with no record for the period surface
+ * as "Not Submitted" / Blank.
  */
 
 // One row in the flat master table. Employees with no allocation for
@@ -60,6 +59,7 @@ type MasterRow =
       employeeName: string;
       team: string;
       managerName: string;
+      managerId: string | null;
       status: AllocationStatus;
       workCategory: string;
       subCategory: string | null;
@@ -75,34 +75,67 @@ type MasterRow =
       employeeName: string;
       team: string;
       managerName: string;
+      managerId: string | null;
     };
 
-const statusBadgeClass = (s: AllocationStatus): string => {
-  switch (s) {
-    case "Draft":          return "bg-muted text-muted-foreground";
-    case "Pending Review": return "bg-warning/10 text-warning";
-    case "Needs Revision": return "bg-destructive/10 text-destructive";
-    case "Approved":       return "bg-success/10 text-success";
-  }
-};
+// Reporting/Review view: the approval lifecycle runs in arrears, so this
+// org-wide overview defaults to the PREVIOUS calendar month — the period
+// Finance actually needs to act on — rather than the current month.
+const REPORTING_PERIOD = getReportingPeriod();
+const DEFAULT_YEAR = REPORTING_PERIOD.year;
+const DEFAULT_MONTH = REPORTING_PERIOD.month;
 
-const CURRENT_YEAR = new Date().getFullYear().toString();
-const CURRENT_MONTH = MONTH_NAMES[new Date().getMonth()];
+/** Epic 1 — one flat, pastel-tinted metric in the Bento header. */
+const BentoMetric = ({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string;
+  value: string | number;
+  tone: "success" | "warning" | "destructive";
+  hint?: string;
+}) => {
+  const toneClass =
+    tone === "success"
+      ? "text-success"
+      : tone === "warning"
+        ? "text-warning"
+        : "text-destructive";
+  const dotClass =
+    tone === "success"
+      ? "bg-success/15"
+      : tone === "warning"
+        ? "bg-warning/15"
+        : "bg-destructive/15";
+  return (
+    <div className="flex min-w-[8rem] items-center gap-3 px-4">
+      <span className={`h-9 w-1.5 rounded-full ${dotClass}`} />
+      <div className="min-w-0">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {label}
+        </p>
+        <p className={`text-2xl font-bold leading-tight tabular-nums ${toneClass}`}>
+          {value}
+        </p>
+        {hint && <p className="text-[11px] text-muted-foreground">{hint}</p>}
+      </div>
+    </div>
+  );
+};
 
 const CompanyMasterOverview = () => {
   const { records } = useAllocations();
   const { getAllUsers } = useAuth();
   const { teams: configuredTeams } = useClientsConfig();
 
-  const [month, setMonth] = useState<string>(CURRENT_MONTH);
-  const [year, setYear] = useState<string>(CURRENT_YEAR);
+  const [month, setMonth] = useState<string>(DEFAULT_MONTH);
+  const [year, setYear] = useState<string>(DEFAULT_YEAR);
   const [filterTeam, setFilterTeam] = useState<string>("all");
   const [filterManager, setFilterManager] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-
-  const PAGE_SIZE = 10;
 
   const allUsers = useMemo(
     // Only Employees and Managers show up in the directory view.
@@ -165,6 +198,7 @@ const CompanyMasterOverview = () => {
           employeeName: `${user.firstName} ${user.lastName}`,
           team: user.team,
           managerName: user.managerName,
+          managerId: user.managerId ?? null,
         });
         continue;
       }
@@ -183,6 +217,7 @@ const CompanyMasterOverview = () => {
           employeeName: record.employeeName,
           team: record.team,
           managerName: record.managerName,
+          managerId: record.managerId ?? null,
         });
         continue;
       }
@@ -196,6 +231,7 @@ const CompanyMasterOverview = () => {
             employeeName: record.employeeName,
             team: record.team,
             managerName: record.managerName,
+            managerId: record.managerId ?? null,
             status: record.status,
             workCategory: activity.workCategory,
             subCategory: activity.subCategory ?? null,
@@ -209,6 +245,101 @@ const CompanyMasterOverview = () => {
     }
 
     return rows;
+  }, [allUsers, periodRecords]);
+
+  /**
+   * Period-wide Team rollup, keyed strictly by team name.
+   * Intentionally driven by the period only (NOT the team/manager/status/
+   * search filters) so the global KPI header stays a stable org-wide
+   * compliance picture.
+   *
+   * "Approved %" is approved-over-total-headcount (everyone in the group,
+   * including people who never started) — the compliance number Finance
+   * reports on.
+   */
+  const periodSummaries = useMemo(() => {
+    const recordByEmployee = new Map(periodRecords.map((r) => [r.employeeId, r]));
+    const groups = new Map<
+      string,
+      { team: string; total: number; approved: number; notStarted: number; approvedPct: number }
+    >();
+
+    for (const user of allUsers) {
+      const record = recordByEmployee.get(user.id);
+      const team = record?.team ?? user.team;
+
+      let g = groups.get(team);
+      if (!g) {
+        g = { team, total: 0, approved: 0, notStarted: 0, approvedPct: 0 };
+        groups.set(team, g);
+      }
+      g.total += 1;
+      if (!record) g.notStarted += 1;
+      else if (record.status === "Approved") g.approved += 1;
+    }
+
+    const arr = Array.from(groups.values());
+    for (const g of arr) {
+      g.approvedPct = g.total > 0 ? Math.round((g.approved / g.total) * 100) : 0;
+    }
+    return arr;
+  }, [allUsers, periodRecords]);
+
+  /**
+   * Epic 1 — globally aggregated KPIs for the Bento header. Period-wide and
+   * filter-independent (see periodSummaries) so Finance always sees the true
+   * company picture regardless of how they've drilled the grid below.
+   */
+  const companyKpis = useMemo(() => {
+    let approved = 0;
+    let blank = 0;
+    let total = 0;
+    let pendingTeams = 0;
+    for (const s of periodSummaries) {
+      blank += s.notStarted;
+      total += s.total;
+      if (s.approvedPct < 100) pendingTeams += 1;
+    }
+    const totalTeams = periodSummaries.length;
+    return {
+      completedTeams: totalTeams - pendingTeams,
+      totalTeams,
+      pendingTeams,
+      submittedEmployees: total - blank,
+      totalEmployees: total,
+    };
+  }, [periodSummaries]);
+
+  /**
+   * Epic 2 — managers whose direct reports are NOT yet 100% approved.
+   * Derived directly from the employee directory + period records so it
+   * remains correct with strict single-key team grouping. Managers at the
+   * top of the reporting chain (no managerId) can't be emailed.
+   */
+  const delinquentManagers = useMemo<DelinquentManager[]>(() => {
+    const recordByEmployee = new Map(periodRecords.map((r) => [r.employeeId, r]));
+    const byManager = new Map<string, DelinquentManager>();
+
+    for (const user of allUsers) {
+      const record = recordByEmployee.get(user.id);
+      const managerId = (record?.managerId ?? user.managerId) || null;
+      if (!managerId) continue;
+      const managerName = record?.managerName || user.managerName || "Unassigned";
+      const team = record?.team ?? user.team;
+
+      let m = byManager.get(managerId);
+      if (!m) {
+        m = { managerId, managerName, teams: [], total: 0, outstanding: 0 };
+        byManager.set(managerId, m);
+      }
+      if (!m.teams.includes(team)) m.teams.push(team);
+      m.total += 1;
+      if (record?.status !== "Approved") m.outstanding += 1;
+    }
+
+    return Array.from(byManager.values())
+      .filter((m) => m.outstanding > 0)
+      .sort((a, b) => b.outstanding - a.outstanding);
   }, [allUsers, periodRecords]);
 
   const filtered = useMemo(() => {
@@ -225,9 +356,6 @@ const CompanyMasterOverview = () => {
         const matchesEmployee =
           row.employeeName.toLowerCase().includes(q) ||
           row.employeeId.toLowerCase().includes(q);
-        // Phase P: also let users search by category / sub cat / work
-        // type / client for activity rows. Empty rows only match by
-        // employee (they have no classification).
         const matchesClassification =
           row.kind === "activity" &&
           (row.workCategory.toLowerCase().includes(q) ||
@@ -242,60 +370,96 @@ const CompanyMasterOverview = () => {
     });
   }, [allRows, filterTeam, filterManager, filterStatus, search]);
 
-  useEffect(() => { setPage(1); }, [filterTeam, filterManager, filterStatus, search, month, year]);
+  /**
+   * Epic 2 + 3 — group the filtered flat rows into Team parents with their
+   * employees nested for the drill-down. Grouped strictly by team name so
+   * employees with different direct managers are never split into separate
+   * parent rows. Each EmployeeDetail carries its own managerId/managerName
+   * so child rows can fire targeted reminders individually (Epic 2).
+   */
+  const teamGroups = useMemo<TeamGroup[]>(() => {
+    const groups = new Map<
+      string,
+      { team: string; employees: Map<string, EmployeeDetail> }
+    >();
 
-  // When "All Statuses" is selected, hide "Not Submitted" rows from the table.
-  // They still count toward KPIs so the summary cards stay accurate.
-  // Explicitly filtering by "Not Submitted" in the dropdown still shows them.
-  const visibleRows = useMemo(
-    () =>
-      filterStatus === "all"
-        ? filtered.filter((r) => r.kind !== "empty")
-        : filtered,
-    [filtered, filterStatus],
-  );
-
-  const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
-  const paginated = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  // KPIs — count distinct employees, not rows (employees with many
-  // activities shouldn't inflate the counts).
-  const kpis = useMemo(() => {
-    const byEmployee = new Map<string, MasterRow>();
     for (const row of filtered) {
-      // First row wins — activity rows come before empty rows in the
-      // iteration, so if any activity exists for an employee we keep
-      // that as the representative.
-      if (!byEmployee.has(row.employeeId)) byEmployee.set(row.employeeId, row);
+      let g = groups.get(row.team);
+      if (!g) {
+        g = { team: row.team, employees: new Map() };
+        groups.set(row.team, g);
+      }
+      let emp = g.employees.get(row.employeeId);
+      if (!emp) {
+        emp = {
+          employeeId: row.employeeId,
+          employeeName: row.employeeName,
+          managerName: row.managerName,
+          managerId: row.managerId,
+          status: row.kind === "activity" ? row.status : "Not Submitted",
+          activities: [],
+        };
+        g.employees.set(row.employeeId, emp);
+      }
+      if (row.kind === "activity") {
+        emp.status = row.status; // uniform per record; last write is fine
+        emp.activities.push({
+          key: row.key,
+          workCategory: row.workCategory,
+          subCategory: row.subCategory,
+          workType: row.workType,
+          client: row.client,
+          description: row.description,
+          percentage: row.percentage,
+        });
+      }
     }
-    let approved = 0;
-    let pending = 0;
-    let notSubmitted = 0;
-    for (const row of byEmployee.values()) {
-      if (row.kind === "empty") notSubmitted++;
-      else if (row.status === "Approved") approved++;
-      else if (row.status === "Pending Review") pending++;
+
+    const result: TeamGroup[] = [];
+    for (const [, g] of groups) {
+      const employees = Array.from(g.employees.values()).sort((a, b) =>
+        a.employeeName.localeCompare(b.employeeName),
+      );
+      let approved = 0;
+      let pendingReview = 0;
+      let needsRevision = 0;
+      let draft = 0;
+      let notStarted = 0;
+      for (const e of employees) {
+        switch (e.status) {
+          case "Approved":       approved++; break;
+          case "Pending Review": pendingReview++; break;
+          case "Needs Revision": needsRevision++; break;
+          case "Draft":          draft++; break;
+          case "Not Submitted":  notStarted++; break;
+        }
+      }
+      const total = employees.length;
+      result.push({
+        key: g.team,
+        team: g.team,
+        total,
+        approved,
+        pendingReview,
+        needsRevision,
+        draft,
+        notStarted,
+        approvedPct: total > 0 ? Math.round((approved / total) * 100) : 0,
+        employees,
+      });
     }
-    const activityRows = filtered.filter((r) => r.kind === "activity").length;
-    const teamsRepresented = new Set(filtered.map((r) => r.team)).size;
-    return {
-      totalEmployees: byEmployee.size,
-      approved,
-      pending,
-      notSubmitted,
-      activityRows,
-      teamsRepresented,
-    };
+    // Lowest compliance first — the teams needing attention float to the top.
+    result.sort(
+      (a, b) => a.approvedPct - b.approvedPct || a.team.localeCompare(b.team),
+    );
+    return result;
   }, [filtered]);
 
   // ---- Export ------------------------------------------------------
 
   const [exportOpen, setExportOpen] = useState(false);
+  const [remindersOpen, setRemindersOpen] = useState(false);
 
-  // Human-readable filter summary for the modal preview + export
-  // document title block. "All teams · All managers · All statuses"
-  // when nothing is filtered; collapses to just the active ones
-  // when filters are set.
   const filtersSummary = useMemo(() => {
     const bits: string[] = [];
     bits.push(filterTeam === "all" ? "All teams" : filterTeam);
@@ -305,8 +469,6 @@ const CompanyMasterOverview = () => {
     return bits.join(" · ");
   }, [filterTeam, filterManager, filterStatus, search]);
 
-  // Scope label for the document title. "Apr 2026" normally; add
-  // a team/manager/search modifier when filters are narrow enough.
   const scopeLabel = useMemo(() => {
     const base = `${month} ${year}`;
     const mods: string[] = [];
@@ -315,7 +477,6 @@ const CompanyMasterOverview = () => {
     return mods.length > 0 ? `${base} · ${mods.join(" · ")}` : base;
   }, [month, year, filterTeam, filterManager]);
 
-  // Filename-safe slug.
   const scopeSlug = useMemo(() => {
     return scopeLabel
       .toLowerCase()
@@ -323,14 +484,11 @@ const CompanyMasterOverview = () => {
       .replace(/^-|-$/g, "");
   }, [scopeLabel]);
 
-  // Count of activity rows that will be exported (empty rows are
-  // dropped by buildExportRows).
   const exportableCount = useMemo(
     () => filtered.filter((r) => r.kind === "activity").length,
     [filtered],
   );
 
-  // Dispatch to the right writer based on format, trigger download.
   const handleExport = async (options: ExportOptions) => {
     const rows = buildExportRows(filtered, options.grouping, options.columns);
     try {
@@ -354,7 +512,9 @@ const CompanyMasterOverview = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `cpi-allocations-${options.scopeSlug}.${extension}`;
+      a.download = `cpi-allocations-${options.scopeSlug}-${
+        EXPORT_GROUPING_SLUGS[options.grouping]
+      }.${extension}`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success(
@@ -370,30 +530,108 @@ const CompanyMasterOverview = () => {
     }
   };
 
+  // ---- Inline per-employee reminder (Epic 2) -----------------------
+  // Fires a targeted reminder to a specific manager from a child row.
+  // Reuses the same endpoint as the bulk dialog with a one-id array.
+  const handleRemindManager = async (managerId: string, managerName: string) => {
+    try {
+      const result = await api.notifications.manualReminder(
+        [managerId],
+        month,
+        year,
+      );
+      if (result.sent.length > 0) {
+        toast.success(
+          `Reminder sent to ${managerName} for ${month} ${year}.`,
+        );
+      } else {
+        toast.warning(
+          `Couldn't remind ${managerName} — no email on file.`,
+        );
+      }
+    } catch (err) {
+      const message =
+        err instanceof ApiError
+          ? typeof err.body === "object" &&
+            err.body !== null &&
+            "error" in err.body
+            ? String((err.body as { error: unknown }).error)
+            : `Request failed (${err.status})`
+          : err instanceof Error
+            ? err.message
+            : "Unknown error";
+      toast.error(`Could not send reminder: ${message}`);
+    }
+  };
+
   return (
-    <div className="p-6 space-y-6 overflow-y-auto h-[calc(100vh-3rem)]">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Building2 className="h-5 w-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">
-              Master Overview
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Cross-team work allocation for {month} {year}
-            </p>
+    <div className="p-6 space-y-5 overflow-y-auto h-[calc(100vh-3rem)]">
+      {/* Title */}
+      <div className="flex items-start gap-4">
+        <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">
+          <Building2 className="h-5 w-5 text-primary" />
+        </div>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            Master Overview
+          </h1>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-foreground/75">
+              Cross-team work allocation
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-0.5 text-xs font-bold text-primary ring-1 ring-primary/20">
+              <CalendarRange className="h-3 w-3" />
+              {month} {year}
+            </span>
           </div>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => setExportOpen(true)}
-          className="gap-2"
-          disabled={exportableCount === 0}
-        >
-          <Download className="h-4 w-4" /> Export…
-        </Button>
+      </div>
+
+      {/* Epic 1 — Minimalist Bento KPI header */}
+      <div className="flex flex-wrap items-center gap-y-3 rounded-xl bg-card py-3 shadow-sm ring-1 ring-border/60">
+        <div className="flex flex-1 flex-wrap items-center divide-x divide-border/60">
+          <BentoMetric
+            label="Completed"
+            value={companyKpis.completedTeams}
+            tone="success"
+            hint="teams fully approved this period"
+          />
+          <BentoMetric
+            label="Pending Teams"
+            value={companyKpis.pendingTeams}
+            tone="warning"
+            hint="not yet fully approved"
+          />
+          <BentoMetric
+            label="Submitted"
+            value={`${companyKpis.submittedEmployees}/${companyKpis.totalEmployees}`}
+            tone={companyKpis.submittedEmployees === companyKpis.totalEmployees ? "success" : "destructive"}
+            hint="employees submitted this period"
+          />
+        </div>
+        <div className="ml-auto flex items-center gap-2 px-4">
+          <Button
+            variant="outline"
+            onClick={() => setRemindersOpen(true)}
+            className="gap-2"
+            disabled={delinquentManagers.length === 0}
+            title={
+              delinquentManagers.length === 0
+                ? `Every team is fully approved for ${month} ${year}`
+                : undefined
+            }
+          >
+            <Mail className="h-4 w-4" /> Send Reminders
+            {delinquentManagers.length > 0 ? ` (${delinquentManagers.length})` : ""}
+          </Button>
+          <Button
+            onClick={() => setExportOpen(true)}
+            className="gap-2"
+            disabled={exportableCount === 0}
+          >
+            <Download className="h-4 w-4" /> Export…
+          </Button>
+        </div>
       </div>
 
       <ExportModal
@@ -406,46 +644,13 @@ const CompanyMasterOverview = () => {
         onExport={handleExport}
       />
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Approved</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold text-success">
-              {kpis.approved} <span className="text-base text-muted-foreground font-normal">/ {kpis.totalEmployees}</span>
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Pending Review</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold text-warning">{kpis.pending}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Not Submitted</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold text-destructive">{kpis.notSubmitted}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground">Activities</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-3xl font-bold text-primary">{kpis.activityRows}</p>
-            <p className="text-xs text-muted-foreground">
-              across {kpis.teamsRepresented} {kpis.teamsRepresented === 1 ? "team" : "teams"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      <SendRemindersDialog
+        open={remindersOpen}
+        onClose={() => setRemindersOpen(false)}
+        managers={delinquentManagers}
+        month={month}
+        year={year}
+      />
 
       {/* Filters */}
       <Card>
@@ -504,7 +709,7 @@ const CompanyMasterOverview = () => {
           <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search employee..."
+              placeholder="Search employee, category, client..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
@@ -513,153 +718,12 @@ const CompanyMasterOverview = () => {
         </CardContent>
       </Card>
 
-      {/* Master Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">
-            All Allocations · {month} {year}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Employee</TableHead>
-                <TableHead>Team</TableHead>
-                <TableHead>Manager</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Sub Category</TableHead>
-                <TableHead>Work Type</TableHead>
-                <TableHead>Client</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="text-right">%</TableHead>
-                <TableHead>Status</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={10} className="text-center text-muted-foreground py-8">
-                    No results for the current filters.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                paginated.map((row) => {
-                  if (row.kind === "empty") {
-                    return (
-                      <TableRow key={row.key}>
-                        <TableCell className="font-medium">{row.employeeName}</TableCell>
-                        <TableCell>{row.team}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {row.managerName}
-                        </TableCell>
-                        <TableCell colSpan={6} className="text-sm text-muted-foreground italic">
-                          Not submitted for {month} {year}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="text-destructive border-destructive/30">
-                            Not Submitted
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  }
-                  return (
-                    <TableRow key={row.key}>
-                      <TableCell className="font-medium">{row.employeeName}</TableCell>
-                      <TableCell>{row.team}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {row.managerName}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{row.workCategory}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {row.subCategory ? (
-                          <span
-                            className="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wider"
-                            style={{
-                              background: "hsl(var(--primary-pastel))",
-                              color: "hsl(var(--primary))",
-                              letterSpacing: "0.03em",
-                            }}
-                          >
-                            {row.subCategory}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm">{row.workType}</TableCell>
-                      <TableCell className="text-sm">{row.client}</TableCell>
-                      <TableCell className="text-sm max-w-[280px] truncate" title={row.description}>
-                        {row.description}
-                      </TableCell>
-                      <TableCell className="text-right font-semibold text-primary tabular-nums">
-                        {row.percentage.toFixed(2)}%
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={statusBadgeClass(row.status)}>
-                          {row.status}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between pt-4">
-              <p className="text-sm text-muted-foreground">
-                Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length} rows
-              </p>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                  .filter((p) => p === 1 || p === totalPages || Math.abs(p - page) <= 1)
-                  .reduce<(number | "…")[]>((acc, p, idx, arr) => {
-                    if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push("…");
-                    acc.push(p);
-                    return acc;
-                  }, [])
-                  .map((p, idx) =>
-                    p === "…" ? (
-                      <span key={`ellipsis-${idx}`} className="px-1 text-muted-foreground text-sm">…</span>
-                    ) : (
-                      <Button
-                        key={p}
-                        variant={page === p ? "default" : "outline"}
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => setPage(p as number)}
-                      >
-                        {p}
-                      </Button>
-                    )
-                  )}
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Epic 2 + 3 — Expandable Team grid with employee drill-down */}
+      <ExpandableTeamGrid
+        groups={teamGroups}
+        onRemind={handleRemindManager}
+        emptyMessage="No teams match the current filters."
+      />
     </div>
   );
 };

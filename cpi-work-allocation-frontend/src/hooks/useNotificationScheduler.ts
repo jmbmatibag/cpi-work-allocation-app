@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
+import { getReportingPeriod } from "cpi-work-allocation-shared";
 import { useAuth } from "@/contexts/AuthContext";
-import { useAllocations, MONTH_NAMES } from "@/contexts/AllocationsContext";
+import { useAllocations } from "@/contexts/AllocationsContext";
 import { useEmployees } from "@/contexts/EmployeesContext";
 import { useNotifications } from "@/contexts/NotificationsContext";
 
@@ -30,14 +31,11 @@ export function useNotificationScheduler(): void {
     if (!currentUser || hasRun.current) return;
     hasRun.current = true;
 
-    const today = new Date();
-    const prevMonthIdx =
-      today.getMonth() === 0 ? 11 : today.getMonth() - 1;
-    const prevYear =
-      today.getMonth() === 0
-        ? today.getFullYear() - 1
-        : today.getFullYear();
-    const prevPeriod = `${MONTH_NAMES[prevMonthIdx]} ${prevYear}`;
+    // The reporting period (previous calendar month) is the period these
+    // reminders are about — sourced from the shared arrears utility so the
+    // in-app alert, the SMTP cron, and the UI defaults never diverge.
+    const { monthIndex: prevMonthIdx, year, label: prevPeriod } = getReportingPeriod();
+    const prevYear = parseInt(year, 10);
 
     const employeeMap = new Map(employees.map((e) => [e.id, e]));
 

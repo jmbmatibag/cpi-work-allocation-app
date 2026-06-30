@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
+import { getReportingPeriod } from "cpi-work-allocation-shared";
 import WorkPeriodPicker from "@/components/WorkPeriodPicker";
 import ProgressRing from "@/components/ProgressRing";
 import Workspace, { WorkStreamData } from "@/components/Workspace";
@@ -46,13 +47,17 @@ const MonthlyAllocations = () => {
   // mount. Missing or invalid params fall through to the empty
   // locked-workspace state.
   const [searchParams] = useSearchParams();
+  // Deep-link param wins; otherwise default to the active reporting period
+  // (previous calendar month). The lifecycle runs in arrears, so that's the
+  // period an employee is actually submitting or revising for now — open
+  // straight onto it instead of the empty locked workspace.
   const [month, setMonth] = useState(() => {
     const p = searchParams.get("month") ?? "";
-    return MONTH_NAMES.includes(p) ? p : "";
+    return MONTH_NAMES.includes(p) ? p : getReportingPeriod().month;
   });
   const [year, setYear] = useState(() => {
     const p = searchParams.get("year") ?? "";
-    return /^\d{4}$/.test(p) ? p : "";
+    return /^\d{4}$/.test(p) ? p : getReportingPeriod().year;
   });
   const [streams, setStreams] = useState<WorkStreamData[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);

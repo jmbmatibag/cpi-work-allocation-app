@@ -10,6 +10,7 @@
  *   import { RequestOtpSchema } from 'cpi-work-allocation-shared/schemas/auth';
  */
 
+export * from './lib/reportingPeriod.js';
 export * from './schemas/common.js';
 export * from './schemas/auth.js';
 export * from './schemas/allocations.js';

@@ -25,9 +25,13 @@ const TEST_ADMIN = {
 
 const app = createApp();
 
-// Build a valid auth_token cookie for the test admin
+const ADMIN_SESSION = 'sess-settings-adm';
+const PW_UPDATED = new Date('2020-01-01T00:00:00Z');
+
+// Build a valid auth_token cookie for the test admin. The sessionId must
+// match User.activeSessionId (single-session lock enforced by requireAuth).
 function makeAuthCookie(userId: string, roles: string[]): string {
-  const token = jwt.sign({ sub: userId, roles }, process.env.JWT_SECRET!, {
+  const token = jwt.sign({ sub: userId, roles, sessionId: ADMIN_SESSION }, process.env.JWT_SECRET!, {
     expiresIn: 3600,
     algorithm: 'HS256',
   });
@@ -38,8 +42,8 @@ beforeAll(async () => {
   const passwordHash = await bcrypt.hash('test', 10);
   await prisma.user.upsert({
     where: { id: TEST_ADMIN.id },
-    create: { ...TEST_ADMIN, passwordHash, managerId: null },
-    update: {},
+    create: { ...TEST_ADMIN, passwordHash, managerId: null, activeSessionId: ADMIN_SESSION, passwordUpdatedAt: PW_UPDATED },
+    update: { activeSessionId: ADMIN_SESSION, passwordUpdatedAt: PW_UPDATED },
   });
   // Ensure at least one team exists for the snapshot test
   await prisma.team.upsert({

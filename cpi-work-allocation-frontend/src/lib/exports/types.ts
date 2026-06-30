@@ -22,6 +22,27 @@ export type ExportFormat = "csv" | "xlsx" | "pdf";
 export type ExportGrouping = "flat" | "employee" | "team";
 
 /**
+ * Human-readable label per grouping mode. Rendered in the title block at the
+ * top of every export (CSV/XLSX/PDF) so the recipient can tell at a glance how
+ * the document is organised.
+ */
+export const EXPORT_GROUPING_LABELS: Record<ExportGrouping, string> = {
+  flat: "Flat (one row per activity)",
+  employee: "Grouped by employee",
+  team: "Grouped by team",
+};
+
+/**
+ * Filename-safe token per grouping mode, appended to the download name, e.g.
+ *   cpi-allocations-apr-2026-by-team.xlsx
+ */
+export const EXPORT_GROUPING_SLUGS: Record<ExportGrouping, string> = {
+  flat: "flat",
+  employee: "by-employee",
+  team: "by-team",
+};
+
+/**
  * Column keys map to fields on MasterRow. The modal presents them
  * as checkboxes; the user's selection survives one session (not
  * persisted) so subsequent exports in the same session remember

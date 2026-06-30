@@ -1,6 +1,6 @@
 import ExcelJS from "exceljs";
 import type { ExportColumn, ExportOptions, ExportRow } from "./types";
-import { EXPORT_COLUMN_LABELS } from "./types";
+import { EXPORT_COLUMN_LABELS, EXPORT_GROUPING_LABELS } from "./types";
 import { LOGO_PNG_B64 } from "./logoBase64";
 
 /**
@@ -21,7 +21,7 @@ export async function exportToXlsx(
   options: ExportOptions,
   rows: readonly ExportRow[],
 ): Promise<Blob> {
-  const { columns, scopeLabel, filtersSummary } = options;
+  const { columns, scopeLabel, filtersSummary, grouping } = options;
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "CPI Work Allocation";
@@ -60,7 +60,7 @@ export async function exportToXlsx(
   r1.getCell(textStartCol).alignment = { vertical: "bottom" };
 
   const r2 = sheet.getRow(2);
-  r2.getCell(textStartCol).value = filtersSummary;
+  r2.getCell(textStartCol).value = `${filtersSummary}  ·  ${EXPORT_GROUPING_LABELS[grouping]}`;
   if (colCount > textStartCol) sheet.mergeCells(2, textStartCol, 2, colCount);
   r2.getCell(textStartCol).font = { name: "Calibri", size: 10, color: { argb: "FF6B7280" } };
   r2.getCell(textStartCol).alignment = { vertical: "middle" };

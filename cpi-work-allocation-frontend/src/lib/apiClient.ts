@@ -557,6 +557,58 @@ const settings = {
 };
 
 // ---------------------------------------------------------------------------
+// Notifications (manual reminders — Epic 2)
+// ---------------------------------------------------------------------------
+
+export interface ManualReminderResult {
+  /** Manager ids that were emailed successfully. */
+  sent: string[];
+  /** Manager ids that were skipped, with a reason (e.g. no email on file). */
+  skipped: { id: string; reason: string }[];
+}
+
+export interface ApiNotification {
+  id: string;
+  targetUserId: string;
+  title: string;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  isRead: boolean;
+  actionUrl: string | null;
+  createdAt: string;
+}
+
+const notifications = {
+  // The caller's own notifications, newest first (the bell feed).
+  list: (signal?: AbortSignal) =>
+    get<ApiNotification[]>('/api/notifications', signal),
+
+  // Create a notification for YOURSELF only (server forces targetUserId to
+  // the authenticated user). Used by the client-side login scheduler.
+  createSelf: (body: {
+    title: string;
+    message: string;
+    type?: 'info' | 'success' | 'warning' | 'error';
+    actionUrl?: string;
+  }) => post<{ id: string }>('/api/notifications', body),
+
+  markRead: (id: string) =>
+    patch<{ ok: boolean }>(`/api/notifications/${encodeURIComponent(id)}/read`),
+
+  markAllRead: () =>
+    post<{ ok: boolean; updated: number }>('/api/notifications/read-all'),
+
+  // Finance-triggered overdue-allocation reminder. Sends one email + in-app
+  // notification per selected manager for the given period.
+  manualReminder: (managerIds: string[], month: string, year: string) =>
+    post<ManualReminderResult>('/api/notifications/manual-reminder', {
+      managerIds,
+      month,
+      year,
+    }),
+};
+
+// ---------------------------------------------------------------------------
 // Migration (one-time: localStorage blob → DB)
 // ---------------------------------------------------------------------------
 
@@ -569,4 +621,4 @@ const migrate = {
 // Exported namespace
 // ---------------------------------------------------------------------------
 
-export const api = { auth, employees, allocations, journal, settings, migrate };
+export const api = { auth, employees, allocations, journal, settings, notifications, migrate };

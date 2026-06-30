@@ -3,7 +3,7 @@ import type {
   ExportOptions,
   ExportRow,
 } from "./types";
-import { EXPORT_COLUMN_LABELS } from "./types";
+import { EXPORT_COLUMN_LABELS, EXPORT_GROUPING_LABELS } from "./types";
 
 /**
  * CSV writer.
@@ -22,12 +22,13 @@ export function exportToCsv(
   options: ExportOptions,
   rows: readonly ExportRow[],
 ): Blob {
-  const { columns, scopeLabel, filtersSummary } = options;
+  const { columns, scopeLabel, filtersSummary, grouping } = options;
 
   const lines: string[] = [];
 
   lines.push(csvField(`Allocations — ${scopeLabel}`));
   lines.push(csvField(filtersSummary));
+  lines.push(csvField(EXPORT_GROUPING_LABELS[grouping]));
   lines.push(csvField(`Generated ${new Date().toLocaleString()}`));
   lines.push("");
 

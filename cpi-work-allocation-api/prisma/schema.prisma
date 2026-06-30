@@ -24,6 +24,13 @@ enum AllocationStatus {
   NeedsRevision
 }
 
+enum NotificationType {
+  info
+  success
+  warning
+  error
+}
+
 // ── Core domain models ───────────────────────────────────────────────────────
 
 model User {
@@ -99,6 +106,7 @@ model User {
   auditLogs          AuditLog[]
   otpCodes           OtpCode[]
   refreshTokens      RefreshToken[]
+  notifications      Notification[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -261,6 +269,32 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([userId, createdAt])
   @@index([createdAt])
+}
+
+// In-app notification (the bell UI). Server-owned: created by workflow
+// events (submit / approve / return), manual reminders, and the team-
+// completion hook — plus self-targeted reminders posted by the client
+// scheduler. Replaces the former localStorage-only store so notifications
+// survive devices and reach the user that an event actually concerns.
+model Notification {
+  id           String           @id @default(uuid())
+  targetUserId String
+  title        String
+  message      String
+  type         NotificationType @default(info)
+  isRead       Boolean          @default(false)
+  // Optional in-app deep link (e.g. "/team-hub", "/allocations").
+  actionUrl    String?
+
+  // Cascade: a user's notifications are theirs alone — drop them with the user.
+  target User @relation(fields: [targetUserId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  // Primary read pattern: "this user's notifications, newest first."
+  @@index([targetUserId, createdAt])
+  // Unread-count badge query.
+  @@index([targetUserId, isRead])
 }
 
 // ── Taxonomy / config ────────────────────────────────────────────────────────

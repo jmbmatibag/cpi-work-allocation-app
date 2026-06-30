@@ -343,10 +343,13 @@ function findCaseInsensitive(
   pool: readonly string[],
   needle: string,
 ): string | undefined {
-  // Normalize both sides: lowercase + treat hyphens as spaces so
-  // "Quick-Policy" (the hyphenated form emitted by
-  // preprocessMultiWordTags) matches "Quick Policy" in the taxonomy.
-  const normalize = (s: string) => s.toLowerCase().replace(/-/g, " ").trim();
+  // Normalize both sides: lowercase + collapse any run of non-alphanumeric
+  // characters (hyphens, commas, slashes, ampersands, spaces) to a single
+  // space. This lets the hyphenated form emitted by preprocessMultiWordTags
+  // ("Sales-Marketing-BD") match the stored taxonomy name
+  // ("Sales, Marketing & BD") even when special characters differ.
+  const normalize = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const nNorm = normalize(needle);
   return pool.find((p) => normalize(p) === nNorm);
 }
@@ -629,7 +632,13 @@ function preprocessMultiWordTags(
     // Match `#Name` (case-insensitive, word-boundary at start, end at non-name char or EOL).
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp(`(?<![A-Za-z0-9])#${escaped}(?![A-Za-z0-9])`, "gi");
-    const hyphenated = "#" + name.replace(/\s+/g, "-");
+    // Strip any character that TAG_RE can't capture (commas, ampersands,
+    // spaces, etc.) so the resulting slug is safe for the regex to extract.
+    // findCaseInsensitive normalises both sides back to plain words for
+    // comparison, so "Sales-Marketing-BD" round-trips to "Sales, Marketing & BD".
+    const hyphenated =
+      "#" +
+      name.replace(/[^A-Za-z0-9/]+/g, "-").replace(/^-|-$/g, "");
     out = out.replace(re, hyphenated);
   }
   return out;

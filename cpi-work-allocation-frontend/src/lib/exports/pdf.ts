@@ -1,7 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { ExportOptions, ExportRow } from "./types";
-import { EXPORT_COLUMN_LABELS } from "./types";
+import { EXPORT_COLUMN_LABELS, EXPORT_GROUPING_LABELS } from "./types";
 import { LOGO_DATA_URI } from "./logoBase64";
 
 /**
@@ -24,7 +24,7 @@ export async function exportToPdf(
   options: ExportOptions,
   rows: readonly ExportRow[],
 ): Promise<Blob> {
-  const { columns, scopeLabel, filtersSummary } = options;
+  const { columns, scopeLabel, filtersSummary, grouping } = options;
 
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();  // 297mm
@@ -65,7 +65,10 @@ export async function exportToPdf(
       doc.setFont("helvetica", "normal");
       doc.setTextColor(100, 116, 139);
       doc.text(
-        doc.splitTextToSize(safe(filtersSummary), pageW - tx - ML),
+        doc.splitTextToSize(
+          safe(`${filtersSummary}  ·  ${EXPORT_GROUPING_LABELS[grouping]}`),
+          pageW - tx - ML,
+        ),
         tx, 20,
       );
 

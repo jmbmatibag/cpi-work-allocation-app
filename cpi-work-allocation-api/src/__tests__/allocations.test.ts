@@ -11,7 +11,17 @@ import jwt from 'jsonwebtoken';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
 
-vi.mock('../lib/mailer.js', () => ({ sendOtpEmail: vi.fn() }));
+// Keep the real template builders + recipient resolver; stub only the
+// actual senders so tests neither hit SMTP nor depend on env config.
+vi.mock('../lib/mailer.js', async (importActual) => {
+  const actual = await importActual<typeof import('../lib/mailer.js')>();
+  return {
+    ...actual,
+    sendOtpEmail: vi.fn().mockResolvedValue(undefined),
+    sendNotificationEmail: vi.fn().mockResolvedValue(undefined),
+    verifySmtp: vi.fn().mockResolvedValue({ ok: true }),
+  };
+});
 
 const app = createApp();
 
@@ -28,23 +38,50 @@ const MGR = {
   team: 'IT/Platforms', jobTitle: 'Manager',
 };
 
-function cookie(userId: string, roles: string[]) {
-  const token = jwt.sign({ sub: userId, roles }, process.env.JWT_SECRET!, {
+// Session lock: the JWT's sessionId must match User.activeSessionId, so each
+// token carries a fixed sessionId and we stamp the same value on the user.
+const EMP_SESSION = 'test-sess-alloc-emp';
+const MGR_SESSION = 'test-sess-alloc-mgr';
+
+function cookie(userId: string, roles: string[], sessionId: string) {
+  const token = jwt.sign({ sub: userId, roles, sessionId }, process.env.JWT_SECRET!, {
     expiresIn: 3600, algorithm: 'HS256',
   });
   return `auth_token=${token}`;
 }
 
-const empCookie = cookie(EMP.id, EMP.roles);
-const mgrCookie = cookie(MGR.id, MGR.roles);
+const empCookie = cookie(EMP.id, EMP.roles, EMP_SESSION);
+const mgrCookie = cookie(MGR.id, MGR.roles, MGR_SESSION);
+
+// Anchor passwordUpdatedAt safely in the past so the token's iat is always
+// newer (the auth middleware revokes tokens issued before a password change).
+const PW_UPDATED = new Date('2020-01-01T00:00:00Z');
 
 beforeAll(async () => {
   const hash = await bcrypt.hash('test', 10);
-  await prisma.user.upsert({ where: { id: MGR.id }, create: { ...MGR, passwordHash: hash, managerId: null }, update: {} });
-  await prisma.user.upsert({ where: { id: EMP.id }, create: { ...EMP, passwordHash: hash, managerId: MGR.id }, update: {} });
+  await prisma.user.upsert({
+    where: { id: MGR.id },
+    create: { ...MGR, passwordHash: hash, managerId: null, activeSessionId: MGR_SESSION, passwordUpdatedAt: PW_UPDATED },
+    update: { activeSessionId: MGR_SESSION, passwordUpdatedAt: PW_UPDATED },
+  });
+  await prisma.user.upsert({
+    where: { id: EMP.id },
+    create: { ...EMP, passwordHash: hash, managerId: MGR.id, activeSessionId: EMP_SESSION, passwordUpdatedAt: PW_UPDATED },
+    update: { activeSessionId: EMP_SESSION, passwordUpdatedAt: PW_UPDATED, managerId: MGR.id },
+  });
 });
 
 afterAll(async () => {
+  // Approving the team here fires the Finance team-completion notice, which
+  // fans out to every real Finance/Admin user in the dev DB. Deleting the
+  // test users won't remove those fan-out rows, so scrub them by the test
+  // manager's name before tearing the users down.
+  await prisma.notification.deleteMany({
+    where: {
+      title: 'Team Allocations Fully Approved',
+      message: { contains: `${MGR.firstName} ${MGR.lastName}` },
+    },
+  });
   await prisma.allocationRecord.deleteMany({ where: { employeeId: EMP.id } });
   await prisma.user.deleteMany({ where: { id: { in: [EMP.id, MGR.id] } } });
   await prisma.$disconnect();
