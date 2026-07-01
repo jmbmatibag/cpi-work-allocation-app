@@ -25,7 +25,7 @@ export const CLIENTS = [
 ];
 
 export const MAIN_CATEGORIES = [
-  'General Work', 'Projects', 'HR', 'IT', 'BD/Mktg/Sales', 'Finance',
+  'General Work', 'Projects', 'HR', 'IT', 'Sales, Marketing & BD', 'Finance',
 ];
 
 export const SUB_CATEGORIES = [
@@ -36,11 +36,11 @@ export const SUB_CATEGORIES = [
 export const WORK_TYPES = [
   // General Work
   { name: 'Administrative',    parents: ['General Work'] },
-  { name: 'Meetings',          parents: ['General Work', 'HR', 'Geniisys', 'Quick Policy', 'IT', 'BD/Mktg/Sales', 'Finance'] },
+  { name: 'Meetings',          parents: ['General Work', 'HR', 'Geniisys', 'Quick Policy', 'IT', 'Sales, Marketing & BD', 'Finance'] },
   { name: 'Training',          parents: ['General Work', 'HR'] },
   { name: 'Documentation',     parents: ['General Work', 'Geniisys', 'Quick Policy', 'IT'] },
   { name: 'Communication',     parents: ['General Work'] },
-  { name: 'Research',          parents: ['General Work', 'BD/Mktg/Sales'] },
+  { name: 'Research',          parents: ['General Work', 'Sales, Marketing & BD'] },
   // Projects — via sub categories
   { name: 'Implementation',    parents: ['Geniisys', 'Quick Policy'] },
   { name: 'Enhancement',       parents: ['Geniisys', 'Quick Policy'] },
@@ -62,12 +62,12 @@ export const WORK_TYPES = [
   { name: 'Helpdesk',          parents: ['IT'] },
   { name: 'Networking',        parents: ['IT'] },
   { name: 'Monitoring',        parents: ['IT'] },
-  // BD/Mktg/Sales
-  { name: 'Lead Generation',   parents: ['BD/Mktg/Sales'] },
-  { name: 'Client Relations',  parents: ['BD/Mktg/Sales'] },
-  { name: 'Proposals',         parents: ['BD/Mktg/Sales'] },
-  { name: 'Marketing Campaign', parents: ['BD/Mktg/Sales'] },
-  { name: 'Sales',             parents: ['BD/Mktg/Sales'] },
+  // Sales, Marketing & BD
+  { name: 'Lead Generation',   parents: ['Sales, Marketing & BD'] },
+  { name: 'Client Relations',  parents: ['Sales, Marketing & BD'] },
+  { name: 'Proposals',         parents: ['Sales, Marketing & BD'] },
+  { name: 'Marketing Campaign', parents: ['Sales, Marketing & BD'] },
+  { name: 'Sales',             parents: ['Sales, Marketing & BD'] },
   // Finance
   { name: 'Budgeting',         parents: ['Finance'] },
   { name: 'Reporting',         parents: ['Finance'] },
@@ -82,10 +82,10 @@ export const INFERENCE_RULES = [
   { keywords: ['helpdesk', 'ticket', 'support request'], category: 'IT', workType: 'Helpdesk' },
   { keywords: ['network', 'connectivity', 'dns', 'vpn'], category: 'IT', workType: 'Networking' },
   { keywords: ['monitoring', 'downtime', 'uptime', 'alerting'], category: 'IT', workType: 'Monitoring' },
-  { keywords: ['marketing', 'campaign', 'content', 'branding', 'advertising'], category: 'BD/Mktg/Sales', workType: 'Marketing Campaign' },
-  { keywords: ['lead generation', 'sales lead', 'prospect'], category: 'BD/Mktg/Sales', workType: 'Lead Generation' },
-  { keywords: ['proposal', 'rfp', 'bid'], category: 'BD/Mktg/Sales', workType: 'Proposals' },
-  { keywords: ['sales', 'revenue', 'deal', 'closing'], category: 'BD/Mktg/Sales', workType: 'Sales' },
+  { keywords: ['marketing', 'campaign', 'content', 'branding', 'advertising'], category: 'Sales, Marketing & BD', workType: 'Marketing Campaign' },
+  { keywords: ['lead generation', 'sales lead', 'prospect'], category: 'Sales, Marketing & BD', workType: 'Lead Generation' },
+  { keywords: ['proposal', 'rfp', 'bid'], category: 'Sales, Marketing & BD', workType: 'Proposals' },
+  { keywords: ['sales', 'revenue', 'deal', 'closing'], category: 'Sales, Marketing & BD', workType: 'Sales' },
   { keywords: ['interview', 'recruitment', 'hiring', 'candidate', 'technical interview'], category: 'HR', workType: 'Recruitment' },
   { keywords: ['onboarding', 'orientation', 'new hire'], category: 'HR', workType: 'Onboarding' },
   { keywords: ['policy', 'handbook', 'compliance'], category: 'HR', workType: 'Policy' },

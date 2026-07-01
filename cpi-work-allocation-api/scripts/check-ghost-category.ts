@@ -11,6 +11,7 @@
  * matches the running server exactly.
  */
 
+import 'dotenv/config';
 import { prisma } from '../src/lib/prisma.js';
 
 const OLD = 'BD/Mktg/Sales';

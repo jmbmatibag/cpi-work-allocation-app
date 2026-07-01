@@ -238,6 +238,15 @@ export async function renameMainCategory(req: AuthRequest, res: Response): Promi
       data: { category: newName },
     });
 
+    // Repoint the denormalised category copy on saved allocation cards.
+    // AllocationActivity.streamCategory is a plain string with no FK, so
+    // without this a rename leaves existing cards showing the old name
+    // (the "ghost category" bug).
+    await tx.allocationActivity.updateMany({
+      where: { streamCategory: oldName },
+      data: { streamCategory: newName },
+    });
+
     await logAuditTx(tx, {
       userId: req.userId!,
       action: 'update',
@@ -363,6 +372,13 @@ export async function renameSubCategory(req: AuthRequest, res: Response): Promis
         },
       });
     }
+
+    // Repoint the denormalised sub-category copy on saved allocation cards
+    // (same rationale as renameMainCategory's streamCategory cascade).
+    await tx.allocationActivity.updateMany({
+      where: { subCategory: oldName },
+      data: { subCategory: newName },
+    });
 
     await logAuditTx(tx, {
       userId: req.userId!,

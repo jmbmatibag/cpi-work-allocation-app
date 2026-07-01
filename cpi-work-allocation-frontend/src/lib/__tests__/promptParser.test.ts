@@ -238,7 +238,7 @@ describe("inferCategory — tech-lead regression", () => {
 
   it("still classifies 'lead generation effort' as Lead Generation", () => {
     expect(inferCategory("lead generation effort for Q2")).toEqual({
-      category: "BD/Mktg/Sales",
+      category: "Sales, Marketing & BD",
       subCategory: null,
       workType: "Lead Generation",
     });
@@ -478,7 +478,7 @@ const phasePTaxonomy: TaxonomySnapshot = {
     Projects: "Development",
     HR: "Recruitment",
     IT: "Infrastructure",
-    "BD/Mktg/Sales": "Marketing Campaign",
+    "Sales, Marketing & BD": "Marketing Campaign",
     Finance: "Reporting",
     Geniisys: "Implementation",
     "Quick Policy": "Implementation",
@@ -488,7 +488,7 @@ const phasePTaxonomy: TaxonomySnapshot = {
     Projects: ["Development", "Testing", "Deployment", "Planning", "Review", "Support"],
     HR: ["Recruitment", "Onboarding", "Policy", "Compliance", "Engagement", "Benefits"],
     IT: ["Infrastructure", "Security", "DevOps", "Helpdesk", "Networking", "Monitoring"],
-    "BD/Mktg/Sales": ["Lead Generation", "Client Relations", "Proposals", "Marketing Campaign", "Sales"],
+    "Sales, Marketing & BD": ["Lead Generation", "Client Relations", "Proposals", "Marketing Campaign", "Sales"],
     Finance: ["Budgeting", "Reporting", "Audit", "Forecasting"],
     Geniisys: ["Implementation", "Enhancement", "Maintenance", "Product Development", "Support", "Testing", "Planning", "Meetings", "Documentation"],
     "Quick Policy": ["Implementation", "Product Development", "Support", "Enhancement", "Planning", "Meetings"],
@@ -584,7 +584,7 @@ describe("Phase P — sub-category tag resolution", () => {
       "- Campaign prep #bdmktg - 15%",
       phasePOptions,
     );
-    expect(result[0].workCategory).toBe("BD/Mktg/Sales");
+    expect(result[0].workCategory).toBe("Sales, Marketing & BD");
     expect(result[0].subCategory).toBeNull();
   });
 
