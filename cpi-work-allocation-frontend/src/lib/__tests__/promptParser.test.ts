@@ -471,7 +471,7 @@ import type { TaxonomySnapshot } from "../promptParser";
 const phasePTaxonomy: TaxonomySnapshot = {
   subCategoryToMain: {
     Geniisys: "Projects",
-    Quick Policy: "Projects",
+    "Quick Policy": "Projects",
   },
   defaultWorkTypeByParent: {
     "General Work": "Meetings",
@@ -481,7 +481,7 @@ const phasePTaxonomy: TaxonomySnapshot = {
     "BD/Mktg/Sales": "Marketing Campaign",
     Finance: "Reporting",
     Geniisys: "Implementation",
-    Quick Policy: "Implementation",
+    "Quick Policy": "Implementation",
   },
   workTypesByParent: {
     "General Work": ["Administrative", "Meetings", "Training", "Documentation", "Communication", "Research"],
@@ -491,7 +491,7 @@ const phasePTaxonomy: TaxonomySnapshot = {
     "BD/Mktg/Sales": ["Lead Generation", "Client Relations", "Proposals", "Marketing Campaign", "Sales"],
     Finance: ["Budgeting", "Reporting", "Audit", "Forecasting"],
     Geniisys: ["Implementation", "Enhancement", "Maintenance", "Product Development", "Support", "Testing", "Planning", "Meetings", "Documentation"],
-    Quick Policy: ["Implementation", "Product Development", "Support", "Enhancement", "Planning", "Meetings"],
+    "Quick Policy": ["Implementation", "Product Development", "Support", "Enhancement", "Planning", "Meetings"],
   },
 };
 
@@ -605,6 +605,92 @@ describe("Phase P — sub-category tag resolution", () => {
     expect(result).toHaveLength(2);
     expect("subCategory" in result[0]).toBe(true);
     expect("subCategory" in result[1]).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Multi-word tags with special characters (commas, ampersands) and
+// tolerant whitespace. Regression for the live bug where typing
+// "#Sales, Marketing & BD" only captured "#Sales", breaking auto-
+// categorization after the taxonomy was renamed from "BD/Mktg/Sales".
+// ---------------------------------------------------------------------
+
+const punctTaxonomy: TaxonomySnapshot = {
+  subCategoryToMain: {
+    Geniisys: "Projects",
+    "Quick Policy": "Projects",
+  },
+  defaultWorkTypeByParent: {
+    "General Work": "Meetings",
+    Projects: "Development",
+    "Sales, Marketing & BD": "Marketing Campaign",
+    Geniisys: "Implementation",
+    "Quick Policy": "Implementation",
+  },
+  workTypesByParent: {
+    "Sales, Marketing & BD": [
+      "Lead Generation",
+      "Client Relations",
+      "Proposals",
+      "Marketing Campaign",
+      "Sales",
+    ],
+    Geniisys: ["Implementation", "Enhancement", "Testing"],
+    "Quick Policy": ["Implementation", "Enhancement"],
+  },
+};
+
+const punctOptions = {
+  defaultTeam: "BD/Mktg/Sales",
+  knownClients: ["AUII", "Meridian"],
+  fallbackClient: "N/A",
+  taxonomy: punctTaxonomy,
+};
+
+describe("Multi-word tags with punctuation + tolerant whitespace", () => {
+  it("canonical form: #Sales, Marketing & BD resolves the whole tag", () => {
+    const result = parseWorkAllocation(
+      "- Booth setup #Sales, Marketing & BD - 40%",
+      punctOptions,
+    );
+    expect(result[0].workCategory).toBe("Sales, Marketing & BD");
+    expect(result[0].subCategory).toBeNull();
+  });
+
+  it("missing space after comma: #Sales,Marketing & BD still resolves", () => {
+    const result = parseWorkAllocation(
+      "- Booth setup #Sales,Marketing & BD - 40%",
+      punctOptions,
+    );
+    expect(result[0].workCategory).toBe("Sales, Marketing & BD");
+  });
+
+  it("extra whitespace padding around separators still resolves", () => {
+    const result = parseWorkAllocation(
+      "- Booth setup #Sales ,  Marketing  &  BD - 40%",
+      punctOptions,
+    );
+    expect(result[0].workCategory).toBe("Sales, Marketing & BD");
+  });
+
+  it("degrades gracefully: unknown text after # falls back to single word", () => {
+    const result = parseWorkAllocation(
+      "- Prospecting #Sales pitch to Meridian - 25%",
+      punctOptions,
+    );
+    // "#Sales" is not a known taxonomy name here (the main cat is the full
+    // punctuated name), so no multi-word collapse happens and classification
+    // falls through to keyword inference rather than mis-tagging.
+    expect(result[0].workCategory).not.toBe("Projects");
+  });
+
+  it("still resolves plain multi-word names (#Quick Policy) unchanged", () => {
+    const result = parseWorkAllocation(
+      "- Enhancement work #Quick Policy - 30%",
+      punctOptions,
+    );
+    expect(result[0].workCategory).toBe("Projects");
+    expect(result[0].subCategory).toBe("Quick Policy");
   });
 });
 

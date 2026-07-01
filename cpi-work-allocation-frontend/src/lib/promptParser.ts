@@ -618,10 +618,15 @@ function preprocessMultiWordTags(
   taxonomy: TaxonomySnapshot | undefined,
 ): string {
   if (!taxonomy) return text;
+  // Any taxonomy name carrying a separator — space, comma, ampersand,
+  // slash, hyphen — can't be captured by the single-token TAG_RE and must
+  // be collapsed to a hyphenated slug first. Widened from "contains a
+  // space" to "contains any non-alphanumeric char" so punctuated names
+  // like "Sales, Marketing & BD" are handled, not just "Quick Policy".
   const names: string[] = [
     ...Object.keys(taxonomy.subCategoryToMain),
     ...Object.keys(defaultParentsFromTaxonomy(taxonomy)),
-  ].filter((n) => n.includes(" ")); // only multi-word entries need this
+  ].filter((n) => /[^A-Za-z0-9]/.test(n));
   if (names.length === 0) return text;
 
   // Longest first to avoid partial matches eating shorter ones.
@@ -629,9 +634,23 @@ function preprocessMultiWordTags(
 
   let out = text;
   for (const name of names) {
-    // Match `#Name` (case-insensitive, word-boundary at start, end at non-name char or EOL).
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(`(?<![A-Za-z0-9])#${escaped}(?![A-Za-z0-9])`, "gi");
+    // Build a whitespace-/punctuation-tolerant matcher. Split the name into
+    // its alphanumeric word runs, then rejoin them with a separator class
+    // that accepts the taxonomy's own punctuation (comma, ampersand, slash,
+    // hyphen, en/em dash) plus arbitrary surrounding whitespace. This lets a
+    // user type any of:
+    //   #Sales, Marketing & BD      (canonical)
+    //   #Sales,Marketing & BD       (missing space)
+    //   #Sales ,  Marketing  &  BD  (extra padding)
+    // and all collapse to the same "#Sales-Marketing-BD" slug. If the text
+    // after the # matches no known multi-word name, nothing is rewritten and
+    // TAG_RE falls back to plain single-word extraction (graceful degrade).
+    const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
+    if (words.length === 0) continue;
+    const pattern = words
+      .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("[\\s,&/–—-]+");
+    const re = new RegExp(`(?<![A-Za-z0-9])#${pattern}(?![A-Za-z0-9])`, "gi");
     // Strip any character that TAG_RE can't capture (commas, ampersands,
     // spaces, etc.) so the resulting slug is safe for the regex to extract.
     // findCaseInsensitive normalises both sides back to plain words for
