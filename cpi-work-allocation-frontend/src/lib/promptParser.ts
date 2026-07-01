@@ -401,32 +401,51 @@ function stemWord(word: string): string {
 }
 
 /**
- * Epic 3 — loosened keyword matching. Previously this required the exact
- * keyword to appear at a left word boundary, so a rule keyword "Testing"
- * failed to catch "test" or "tests". Now matching is stem-based and
- * case-insensitive: the keyword is reduced to its base form and matched as
- * a substring of the text, so "Testing" catches "test", "tests", "tested",
- * and "testing".
+ * Epic 2 — stemming-based, boundary-aware keyword matching.
  *
- * - Multi-word phrases → plain case-insensitive substring (unchanged intent).
- * - Very short keywords (stem < 3 chars, e.g. "qa", "ci", "hr") keep a
- *   strict left word boundary so they don't match inside unrelated words.
- * - Everything else → substring match on the keyword's stem.
+ * Previously this required an exact keyword at a left word boundary, so a
+ * rule keyword "Testing" failed to catch "test" or "tests". An interim fix
+ * used a raw `text.includes(stem)` substring test, which over-matched:
+ * keyword "planning" (stem "plann") fired inside "aeroplanning".
  *
- * This is intentionally permissive per the QA request to loosen the engine.
+ * This version reduces the keyword to its stem and matches it with a
+ * **left word boundary** so it can't fire mid-word, while leaving the right
+ * side open so any inflection (plural / gerund / past / nominalization)
+ * still matches. "test" / "testing" both stem to "test" and catch "test",
+ * "tests", "tested", "testing" — but "contest" and "aeroplanning" no longer
+ * produce false positives.
+ *
+ * - Multi-word phrases ("lead generation", "microsoft 365") → plain
+ *   case-insensitive substring; the phrase boundaries already scope them.
+ * - Very short keywords (stem < 3 chars, e.g. "qa", "vm") get BOTH a left
+ *   and right boundary so they only match as standalone tokens — short
+ *   fragments are the most prone to false positives.
+ * - Everything else → left-bounded stem, `\b(stem)…`, right side open for
+ *   suffixes.
+ *
+ * All matching is case-insensitive.
  */
 function matchesKeyword(text: string, keyword: string): boolean {
   const lowerText = text.toLowerCase();
-  const lowerKw = keyword.toLowerCase();
+  // Lowercase + strip trailing punctuation so "test," or "testing." stem cleanly.
+  const lowerKw = keyword.toLowerCase().trim().replace(/[^a-z0-9]+$/, "");
+  if (!lowerKw) return false;
 
   if (lowerKw.includes(" ")) return lowerText.includes(lowerKw);
 
   const stem = stemWord(lowerKw);
+  const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  // Short stems (qa, vm, ci): require both boundaries — they're too small to
+  // trust an open right side (would match "qa" inside "qat", "quays", etc.).
   if (stem.length < 3) {
-    const escaped = lowerKw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`(?:^|[^a-z0-9])${escaped}`, "i").test(lowerText);
+    return new RegExp(`(?:^|[^a-z0-9])${escaped}(?![a-z0-9])`, "i").test(lowerText);
   }
-  return lowerText.includes(stem);
+
+  // Left boundary + stem, right side open for inflectional suffixes
+  // (…s, …es, …ing, …ed, …ment, …er, …). Boundary-aware per Epic 2:
+  // catches variations without matching inside a larger unrelated word.
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}[a-z0-9]*`, "i").test(lowerText);
 }
 
 /**
@@ -556,30 +575,21 @@ function refineWorkTypeForParent(
   );
   if (exact) return exact;
 
-  // Second pass: substring-similar match. Handles the common
-  // case where the inference rule targets a main-level work
-  // type that the sub category has a specialized variant of.
-  // Example: inferred "Development"; Geniisys doesn't list
-  // "Development" directly but has "Product Development" — we
-  // pick that rather than falling to the parent default.
-  //
-  // Match in both directions (inferred contained in valid, or
-  // valid contained in inferred) so both "Development" ↔
-  // "Product Development" and "Support Request" ↔ "Support"
-  // resolve. First match wins — the valid list's declaration
-  // order breaks ties toward the admin's preferred variant.
-  const similar = validList.find((w) => {
-    const wLower = w.toLowerCase();
-    return (
-      wLower.includes(inferredLower) || inferredLower.includes(wLower)
-    );
-  });
-  if (similar) return similar;
-
   // No keyword evidence maps to a valid work type under this parent.
-  // Return empty so the dropdown shows unselected — the user must
-  // choose explicitly rather than receive an arbitrary default.
-  return "";
+  //
+  // Fall back to the parent's configured default work type (what
+  // resolveTag already picked) — NEVER return empty. An empty work type
+  // was the top production complaint: a tag resolved cleanly but the
+  // card came back with a blank Work Type ("it didn't detect"). A
+  // sensible parent default is always better than blank, and the user
+  // can still override it in the review step.
+  //
+  // We deliberately do NOT substring-fuzz here (e.g. inferred
+  // "Development" → parent's "Product Development"): that promoted
+  // unrelated work types and mis-tagged cards. Exact match wins; if the
+  // keyword evidence isn't a clean fit under this parent, we defer to
+  // the parent default rather than guessing.
+  return fallbackWorkType;
 }
 
 // =====================================================================
