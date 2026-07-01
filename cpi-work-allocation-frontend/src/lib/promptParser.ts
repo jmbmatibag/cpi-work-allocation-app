@@ -825,6 +825,32 @@ export function parseWorkAllocation(
           workType = inferred.workType;
         }
 
+        // ── Multiple explicit @client tags in the header → fan out ────────
+        // e.g. "@CIC @Concise #Geniisys:" splits blockPercentage across both.
+        const headerClientTags = [
+          ...headerText.matchAll(/(?<![A-Za-z0-9])@([A-Za-z][A-Za-z0-9_-]*)/g),
+        ].map(
+          (m) =>
+            knownClients.find((c) => c.toLowerCase() === m[1].toLowerCase()) ??
+            m[1],
+        );
+        if (headerClientTags.length > 1) {
+          const splitPct = blockPercentage / headerClientTags.length;
+          for (const pc of headerClientTags) {
+            results.push({
+              team: defaultTeam,
+              workCategory,
+              subCategory,
+              workType,
+              client: pc,
+              description,
+              percentage: splitPct,
+            });
+          }
+          i = j;
+          continue;
+        }
+
         // ── Scenario A: Project-Client fan-out (hierarchical) ─────────────
         // When a #SubCat tag resolved to a sub-category that has project-
         // client assignments AND no @client appears in the header, create
@@ -939,12 +965,38 @@ export function parseWorkAllocation(
       //      can see and either keep or remap it.
       //   2. Known-client substring match.
       //   3. Configured fallback.
-      const explicitClientTag = description.match(
-        /(?<![A-Za-z0-9])@([A-Za-z][A-Za-z0-9_-]*)/,
+      //   0. Multiple explicit @client tags → one card per client, % split
+      //      equally (e.g. "#Geniisys Meetings @CIC @Concise - 47%" →
+      //      CIC 23.5% + Concise 23.5%).
+      const explicitClientTags = [
+        ...description.matchAll(/(?<![A-Za-z0-9])@([A-Za-z][A-Za-z0-9_-]*)/g),
+      ].map(
+        (m) =>
+          knownClients.find((c) => c.toLowerCase() === m[1].toLowerCase()) ??
+          m[1],
       );
-      const client = explicitClientTag
-        ? (knownClients.find(c => c.toLowerCase() === explicitClientTag[1].toLowerCase()) ?? explicitClientTag[1])
-        : matchClient(description, knownClients, fallbackClient);
+
+      if (explicitClientTags.length > 1) {
+        const splitPct = percentage / explicitClientTags.length;
+        for (const pc of explicitClientTags) {
+          results.push({
+            team: defaultTeam,
+            workCategory,
+            subCategory,
+            workType,
+            client: pc,
+            description,
+            percentage: splitPct,
+          });
+        }
+        i++;
+        continue;
+      }
+
+      const client =
+        explicitClientTags.length === 1
+          ? explicitClientTags[0]
+          : matchClient(description, knownClients, fallbackClient);
 
       // ── Scenario A: Project-Client fan-out (simple line) ───────────────
       // When #SubCat is detected, the sub-category has client assignments,

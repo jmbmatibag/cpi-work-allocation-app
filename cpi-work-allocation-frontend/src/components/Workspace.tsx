@@ -607,6 +607,29 @@ const Workspace = ({
     ]);
   };
 
+  // Set a stream's category from its title dropdown (manual streams). The
+  // category lives on the stream title, so this also stamps every activity in
+  // the stream with the chosen category and clears their now-stale sub/work
+  // type selections.
+  const setStreamCategory = (streamIdx: number, category: string) => {
+    onStreamsChange(
+      streams.map((s, i) =>
+        i === streamIdx
+          ? {
+              ...s,
+              category,
+              activities: s.activities.map((a) => ({
+                ...a,
+                workCategory: category,
+                subCategory: null,
+                workType: "",
+              })),
+            }
+          : s,
+      ),
+    );
+  };
+
   const addActivity = (streamIdx: number) => {
     onStreamsChange(
       streams.map((s, i) =>
@@ -614,7 +637,13 @@ const Workspace = ({
           ? {
               ...s,
               expanded: true,
-              activities: [...s.activities, makeBlankActivity(s.category)],
+              // Inherit the stream's category only when it's a real category;
+              // an unclassified manual stream ("New Work Stream") leaves the
+              // new card's category blank until the title dropdown is set.
+              activities: [
+                ...s.activities,
+                makeBlankActivity(categories.includes(s.category) ? s.category : ""),
+              ],
             }
           : s,
       ),
@@ -714,9 +743,19 @@ const Workspace = ({
         <>
           <div className="flex-1 overflow-y-auto space-y-4 pb-24">
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <span className="text-sm font-medium text-muted-foreground">
-                {streams.length} work stream{streams.length !== 1 ? "s" : ""}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-muted-foreground">
+                  {streams.length} work stream{streams.length !== 1 ? "s" : ""}
+                </span>
+                {!disabled && (
+                  <button
+                    onClick={addWorkStream}
+                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                  >
+                    <Plus className="h-3 w-3" /> Add Work Stream
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-2 text-xs">
                 <button onClick={expandAll} className="text-primary hover:underline">
                   Expand All
@@ -727,13 +766,6 @@ const Workspace = ({
                 </button>
                 {!disabled && (
                   <>
-                    <span className="text-muted-foreground">|</span>
-                    <button
-                      onClick={addWorkStream}
-                      className="inline-flex items-center gap-1 text-primary hover:underline"
-                    >
-                      <Plus className="h-3 w-3" /> Add Work Stream
-                    </button>
                     <span className="text-muted-foreground">|</span>
                     <button
                       onClick={() => setClearAllOpen(true)}
@@ -751,6 +783,10 @@ const Workspace = ({
                 (sum, a) => sum + a.percentage,
                 0,
               );
+              // A stream whose title isn't a known main category is a manual
+              // stream awaiting classification — render its title as a category
+              // dropdown instead of static text.
+              const isKnownCategory = categories.includes(stream.category);
 
               return (
                 <div
@@ -767,7 +803,28 @@ const Workspace = ({
                       ) : (
                         <ChevronRight className="h-4 w-4 text-muted-foreground" />
                       )}
-                      <span className="font-semibold text-foreground">{stream.category}</span>
+                      {!disabled && !isKnownCategory ? (
+                        <Select
+                          value=""
+                          onValueChange={(v) => setStreamCategory(sIdx, v)}
+                        >
+                          <SelectTrigger
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-auto w-auto gap-1 border-0 bg-transparent p-0 font-semibold text-foreground shadow-none focus:ring-0 focus:ring-offset-0"
+                          >
+                            <SelectValue placeholder={stream.category || "New Work Stream"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {categories.map((c) => (
+                              <SelectItem key={c} value={c}>
+                                {c}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className="font-semibold text-foreground">{stream.category}</span>
+                      )}
                       <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
                         {stream.activities.length}{" "}
                         {stream.activities.length === 1 ? "activity" : "activities"}
@@ -917,30 +974,28 @@ const Workspace = ({
 
                                     return (
                                       <>
-                                        <div className="space-y-1">
+                                        {/*
+                                          Work Category is set at the stream-
+                                          title level (redundant on the card),
+                                          so this dropdown stays hidden. Kept in
+                                          the tree so the reset-on-change wiring
+                                          remains available if ever re-surfaced.
+                                        */}
+                                        <div className="space-y-1 hidden">
                                           <label className="text-xs font-medium text-muted-foreground">
                                             Work Category
                                           </label>
                                           <Select
                                             value={activity.workCategory}
                                             onValueChange={(v) => {
-                                              // Reset sub + work type on
-                                              // main change to avoid stale
+                                              // Reset sub + work type on main
+                                              // change to avoid stale
                                               // cross-hierarchy values.
                                               const next = streams.map(
                                                 (s, si) =>
                                                   si === sIdx
                                                     ? {
-                                                        // Re-title a single-card
-                                                        // stream to the chosen
-                                                        // category so a manually
-                                                        // added stream stops
-                                                        // reading "New Work Stream".
-                                                        category:
-                                                          s.activities.length === 1
-                                                            ? v
-                                                            : s.category,
-                                                        expanded: s.expanded,
+                                                        ...s,
                                                         activities:
                                                           s.activities.map(
                                                             (a, ai) =>
