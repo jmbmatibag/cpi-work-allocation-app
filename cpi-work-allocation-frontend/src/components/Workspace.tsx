@@ -386,6 +386,7 @@ const Workspace = ({
         subCategories,
         workTypes,
         taxonomy,
+        inferenceRules,
       });
 
       if (result.aiErrorMessage) {

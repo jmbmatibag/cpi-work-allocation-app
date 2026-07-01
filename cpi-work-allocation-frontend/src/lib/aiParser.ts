@@ -29,7 +29,7 @@
  *   access: true` header. See SECURITY NOTE in aiConfig.ts.
  */
 
-import type { ParsedTask, TaxonomySnapshot } from "@/lib/promptParser";
+import type { ParsedTask, TaxonomySnapshot, InferenceRule } from "@/lib/promptParser";
 import { parseWorkAllocation, LEGACY_TAG_HINTS } from "@/lib/promptParser";
 import type { SubCategory, WorkType } from "@/contexts/ClientsConfigContext";
 
@@ -54,6 +54,14 @@ export interface AIParseOptions {
   workTypes: readonly WorkType[];
   /** Live taxonomy snapshot (for rule-parser fallback). */
   taxonomy: TaxonomySnapshot;
+  /**
+   * Live inference rules from the DB (ClientsConfigContext). REQUIRED for the
+   * rule-parser fallback to detect custom work types (DevOps Management,
+   * Debugging, etc.). Without this, parseWorkAllocation falls back to the
+   * hardcoded DEFAULT_INFERENCE_RULES, which only know the seed work types —
+   * so tagged cards for custom work types come back blank.
+   */
+  inferenceRules?: readonly InferenceRule[];
   /**
    * When true, skips the API call and uses the rule parser directly.
    * Used for testing and for explicit user opt-out.
@@ -888,6 +896,11 @@ function runRuleParser(text: string, opts: AIParseOptions): ParsedTask[] {
     knownClients: opts.knownClients,
     fallbackClient: opts.fallbackClient,
     taxonomy: opts.taxonomy,
+    // Pass the live DB rules so the fallback can detect custom work types.
+    // Omit (→ DEFAULT_INFERENCE_RULES) only when none are configured.
+    ...(opts.inferenceRules && opts.inferenceRules.length > 0
+      ? { inferenceRules: opts.inferenceRules }
+      : {}),
   });
 }
 
