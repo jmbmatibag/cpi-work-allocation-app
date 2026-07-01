@@ -438,11 +438,23 @@ export async function setSubCategoryClients(req: AuthRequest, res: Response): Pr
     // For every new client × every linked work type, auto-create an
     // InferenceRule so the NLP parser can classify matching journal text.
     // subCategoryId + workTypeId are populated so future deletes cascade at DB level.
+    //
+    // Keywords MUST include the work type's own tokens, not just the client +
+    // sub name. The parser ignores structural keywords (parent/sub names and
+    // client codes) when choosing a work type, so a rule keyed only on
+    // [client, subName] scores 0 and can never set a work type. Embedding
+    // tokenizeWorkTypeName(wt.name) makes the rule able to detect its own work
+    // type (e.g. "meeting" → Meetings) while the client keyword still supports
+    // client association and the removed-client cleanup below.
     for (const client of newClients) {
       for (const wt of linkedWorkTypes) {
         const rule = await tx.inferenceRule.create({
           data: {
-            keywords: [client.toLowerCase(), existing.name.toLowerCase()],
+            keywords: [
+              client.toLowerCase(),
+              existing.name.toLowerCase(),
+              ...tokenizeWorkTypeName(wt.name),
+            ],
             category: existing.mainCategory.name,
             subCategory: existing.name,
             workType: wt.name,

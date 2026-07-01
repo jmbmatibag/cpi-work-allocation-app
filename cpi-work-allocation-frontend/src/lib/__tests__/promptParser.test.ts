@@ -978,3 +978,57 @@ describe("Live regression — tagged sub-category work-type selection", () => {
     expect(r[0].workType).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------
+// Universality — the same rules apply to EVERY category and sub-category,
+// not just Geniisys. These use the shared phasePTaxonomy/phasePOptions
+// (HR, IT, Projects, Quick Policy, …) with the default rule set to prove
+// there is no parent-specific behavior.
+// ---------------------------------------------------------------------
+describe("Work-type selection is parent-agnostic (all categories & sub-categories)", () => {
+  it("main-category parent #HR: keyword match → correct work type", () => {
+    const r = parseWorkAllocation(
+      "- #HR recruitment and candidate interviews - 100%",
+      phasePOptions,
+    );
+    expect(r[0].workCategory).toBe("HR");
+    expect(r[0].subCategory).toBeNull();
+    expect(r[0].workType).toBe("Recruitment");
+  });
+
+  it("main-category parent #IT: keyword match → correct work type", () => {
+    const r = parseWorkAllocation(
+      "- #IT firewall security audit - 100%",
+      phasePOptions,
+    );
+    expect(r[0].workCategory).toBe("IT");
+    expect(r[0].workType).toBe("Security");
+  });
+
+  it("main-category parent #HR: no matching keyword → BLANK (not a default)", () => {
+    const r = parseWorkAllocation(
+      "- #HR miscellaneous odds and ends - 100%",
+      phasePOptions,
+    );
+    expect(r[0].workCategory).toBe("HR");
+    expect(r[0].workType).toBe("");
+  });
+
+  it("different sub-category #Quick Policy: keyword match → correct work type", () => {
+    const r = parseWorkAllocation(
+      "- #Quick Policy enhancement work - 100%",
+      phasePOptions,
+    );
+    expect(r[0].subCategory).toBe("Quick Policy");
+    expect(r[0].workType).toBe("Enhancement");
+  });
+
+  it("different sub-category #Quick Policy: no matching keyword → BLANK", () => {
+    const r = parseWorkAllocation(
+      "- #Quick Policy general odds and ends - 100%",
+      phasePOptions,
+    );
+    expect(r[0].subCategory).toBe("Quick Policy");
+    expect(r[0].workType).toBe("");
+  });
+});

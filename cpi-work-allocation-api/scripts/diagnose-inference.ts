@@ -1,113 +1,113 @@
 /**
  * scripts/diagnose-inference.ts
  *
- * READ-ONLY diagnostic. For a given sub-category (default "Geniisys"), shows:
- *   1. its parent main category
- *   2. the work types the editor would list under it (parents[] includes it)
- *   3. every inference rule the parser would CONSIDER for a "#<sub>" tag
- *      (category = parent main, scoped to this sub or main-level), with keywords
- *   4. per work type: whether a considered rule can actually produce it, and if
- *      so which keywords — i.e. exactly why a work type resolves or stays blank
+ * READ-ONLY diagnostic. For a given sub-category (default "Geniisys"), shows —
+ * using the SAME scoping the fixed parser uses — which work types the parser
+ * can actually set from a "#<sub>" tag, and which will stay blank because no
+ * rule carries a usable (non-structural) keyword for them.
+ *
+ * The fixed parser scopes candidate rules by WORK-TYPE VALIDITY under the
+ * parent (workTypesByParent), NOT by the rule's stored category, and ignores
+ * "structural" keywords when scoring: the parent/main/sub names AND client
+ * codes (they appear in every auto-generated rule and carry no work-type
+ * signal). This script mirrors that so its verdict matches production.
  *
  * Performs ZERO writes — safe on production.
  *
  *   npx tsx scripts/diagnose-inference.ts                 # defaults to Geniisys
  *   npx tsx scripts/diagnose-inference.ts "Quick Policy"  # any sub-category
+ *   npx tsx scripts/diagnose-inference.ts --all           # scan EVERY sub-category
  */
 
 import 'dotenv/config';
 import { prisma } from '../src/lib/prisma.js';
 
 const norm = (s: string) => s.trim().toLowerCase();
-const SUB = process.argv[2] || 'Geniisys';
+const ALL = process.argv.includes('--all');
+const SUB_ARG = process.argv.slice(2).find((a) => !a.startsWith('--'));
 
 async function main() {
-  const sub = await prisma.subCategory.findFirst({
-    where: { name: { equals: SUB, mode: 'insensitive' } },
-    include: { mainCategory: { select: { name: true } } },
-  });
+  // Shared reference data (fetched once).
+  const [mains, allSubs, workTypes, clients, rules] = await Promise.all([
+    prisma.mainCategory.findMany({ select: { name: true } }),
+    prisma.subCategory.findMany({ include: { mainCategory: { select: { name: true } } } }),
+    prisma.workType.findMany({ select: { name: true, parents: true } }),
+    prisma.client.findMany({ select: { name: true } }),
+    prisma.inferenceRule.findMany({ orderBy: { sortOrder: 'asc' } }),
+  ]);
 
-  if (!sub) {
-    console.log(`Sub-category "${SUB}" not found. Existing sub-categories:`);
-    const all = await prisma.subCategory.findMany({ select: { name: true }, orderBy: { name: 'asc' } });
-    console.log(all.map((s) => s.name).join(', '));
+  // Structural keywords the parser ignores when scoring a work type: every
+  // main + sub name and every client code. (The specific parent name is added
+  // per sub below, but including all taxonomy names is a safe superset.)
+  const structural = new Set<string>([
+    ...mains.map((m) => norm(m.name)),
+    ...allSubs.map((s) => norm(s.name)),
+    ...clients.map((c) => norm(c.name)),
+  ]);
+
+  const subsToScan = ALL
+    ? allSubs
+    : allSubs.filter((s) => norm(s.name) === norm(SUB_ARG || 'Geniisys'));
+
+  if (subsToScan.length === 0) {
+    console.log(`Sub-category "${SUB_ARG}" not found. Existing sub-categories:`);
+    console.log(allSubs.map((s) => s.name).join(', '));
     await prisma.$disconnect();
     return;
   }
 
-  const mainName = sub.mainCategory.name;
-  console.log(`\nSub-category: "${sub.name}"   parent main category: "${mainName}"\n`);
+  const gaps: Array<{ subCategory: string; workType: string }> = [];
 
-  // (2) Work types the dropdown lists under this sub.
-  const wtsUnderSub = await prisma.workType.findMany({
-    where: { parents: { has: sub.name } },
-    select: { name: true, parents: true },
-    orderBy: { name: 'asc' },
-  });
-  console.log(`Work types selectable under "${sub.name}" (${wtsUnderSub.length}):`);
-  console.log('  ' + (wtsUnderSub.map((w) => w.name).join(', ') || '(none)'));
+  for (const sub of subsToScan) {
+    const mainName = sub.mainCategory.name;
 
-  // (3) Rules the parser would consider for "#<sub>": category = parent main,
-  // AND (main-level rule OR scoped to this sub). Mirrors scopeRulesToCategory.
-  const catRules = await prisma.inferenceRule.findMany({
-    where: { category: { equals: mainName, mode: 'insensitive' } },
-    orderBy: { sortOrder: 'asc' },
-  });
-  const considered = catRules.filter(
-    (r) => !r.subCategory || norm(r.subCategory) === norm(sub.name),
-  );
-  console.log(`\nInference rules the parser CONSIDERS for "#${sub.name}" (category="${mainName}", main-level or sub="${sub.name}"): ${considered.length}\n`);
-  console.table(
-    considered.slice(0, 60).map((r) => ({
-      id: r.id,
-      workType: r.workType,
-      subCategory: r.subCategory ?? '(main-level)',
-      keywords: r.keywords.join(', '),
-    })),
-  );
-  if (considered.length > 60) console.log(`  … ${considered.length - 60} more not shown.`);
+    // (2) Work types selectable under this sub (what the dropdown lists).
+    const wtsUnderSub = workTypes
+      .filter((w) => w.parents.includes(sub.name))
+      .map((w) => w.name);
+    const validSet = new Set(wtsUnderSub.map(norm));
 
-  // (4) Per selectable work type: is there a considered rule producing it?
-  const producible = new Map<string, string[][]>();
-  for (const r of considered) {
-    const key = norm(r.workType);
-    if (!producible.has(key)) producible.set(key, []);
-    producible.get(key)!.push(r.keywords);
-  }
-  console.log(`\nCan the parser SET each work type under "${sub.name}"? (needs a considered rule whose keywords appear in the text)\n`);
-  console.table(
-    wtsUnderSub.map((w) => {
-      const kwSets = producible.get(norm(w.name));
-      return {
-        workType: w.name,
-        hasConsideredRule: kwSets ? 'YES' : 'NO — will always be BLANK',
-        exampleKeywords: kwSets ? kwSets.map((k) => `[${k.join(', ')}]`).join(' ; ') : '—',
-      };
-    }),
-  );
+    // Candidate rules per the FIXED parser: workType is valid under this sub,
+    // regardless of the rule's stored category.
+    const candidates = rules.filter((r) => validSet.has(norm(r.workType)));
 
-  // Also flag rules that produce these work types but are scoped OUT (wrong
-  // category) — the likely reason Meetings/etc. fail.
-  const wtNames = wtsUnderSub.map((w) => norm(w.name));
-  const elsewhere = await prisma.inferenceRule.findMany({
-    where: { workType: { in: wtsUnderSub.map((w) => w.name) } },
-  });
-  const scopedOut = elsewhere.filter(
-    (r) => norm(r.category) !== norm(mainName) && wtNames.includes(norm(r.workType)),
-  );
-  if (scopedOut.length > 0) {
-    console.log(
-      `\n⚠️  ${scopedOut.length} rule(s) produce a work type valid under "${sub.name}" but are stored under a DIFFERENT category, so scoping to "${mainName}" DROPS them (this is likely why those work types stay blank):`,
-    );
+    // A work type is reachable if some candidate rule for it has ≥1 keyword
+    // that is NOT structural (not a parent/sub name or client code) — that's a
+    // keyword a user could actually type to select it.
+    const reachable = new Map<string, string[]>();
+    for (const r of candidates) {
+      const usable = r.keywords.filter((k) => !structural.has(norm(k)));
+      if (usable.length === 0) continue;
+      const key = norm(r.workType);
+      if (!reachable.has(key)) reachable.set(key, []);
+      for (const k of usable) if (!reachable.get(key)!.includes(k)) reachable.get(key)!.push(k);
+    }
+
+    console.log(`\n════ Sub-category "${sub.name}"  (main: "${mainName}") ════`);
+    console.log(`Selectable work types (${wtsUnderSub.length}): ${wtsUnderSub.join(', ') || '(none)'}`);
     console.table(
-      scopedOut.slice(0, 40).map((r) => ({
-        id: r.id,
-        workType: r.workType,
-        storedCategory: r.category,
-        subCategory: r.subCategory ?? '(main-level)',
-        keywords: r.keywords.join(', '),
-      })),
+      wtsUnderSub.map((w) => {
+        const kws = reachable.get(norm(w));
+        if (!kws) gaps.push({ subCategory: sub.name, workType: w });
+        return {
+          workType: w,
+          canBeDetected: kws ? 'YES' : 'NO — no usable keyword, will stay BLANK',
+          usableKeywords: kws ? kws.slice(0, 12).join(', ') + (kws.length > 12 ? ' …' : '') : '—',
+        };
+      }),
     );
+  }
+
+  if (gaps.length > 0) {
+    console.log(
+      `\n⚠️  ${gaps.length} (sub-category, work type) pair(s) have NO usable keyword rule — ` +
+        `the parser can never auto-select them; users must pick manually. Add a keyword rule ` +
+        `(or re-run rule generation) to close these:`,
+    );
+    console.table(gaps.slice(0, 100));
+    if (gaps.length > 100) console.log(`   … ${gaps.length - 100} more.`);
+  } else {
+    console.log('\n✅ Every selectable work type has at least one usable keyword rule.');
   }
 
   console.log('\n(Read-only — no changes made.)');
