@@ -1203,6 +1203,19 @@ const DailyJournal = () => {
                   </>
                 )}
               </div>
+
+              {/* Keyboard hint (Epic 4) */}
+              <p className="mt-3 text-[11px] text-muted-foreground/50">
+                Press{" "}
+                <kbd className="px-1.5 py-0.5 rounded border border-border/60 bg-muted text-[10px] font-mono">
+                  Enter
+                </kbd>{" "}
+                for a new entry ·{" "}
+                <kbd className="px-1.5 py-0.5 rounded border border-border/60 bg-muted text-[10px] font-mono">
+                  Shift+Enter
+                </kbd>{" "}
+                for a new line
+              </p>
             </div>
           )}
         </div>

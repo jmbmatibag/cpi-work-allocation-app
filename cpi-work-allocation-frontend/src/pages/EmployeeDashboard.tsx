@@ -20,7 +20,6 @@ import {
   CalendarDays,
   Clock,
   CheckCircle,
-  Sparkles,
   TrendingUp,
   TrendingDown,
   AlertTriangle,
@@ -576,14 +575,11 @@ const EmployeeDashboard = () => {
           onToggle={handleDrillDownToggle}
         />
 
-        {/* AI Performance Insights */}
+        {/* Performance Insights */}
         <Card className="bg-gradient-to-br from-primary/5 via-card to-accent/5 border-primary/20">
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Sparkles className="h-4 w-4 text-primary" />
-              </div>
-              AI Performance Insights
+            <CardTitle className="text-base">
+              Performance Insights
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 text-sm">
@@ -622,11 +618,6 @@ const EmployeeDashboard = () => {
                   </span>{" "}
                   Consider re-balancing time across cross-functional categories
                   to reduce single-stream concentration risk.
-                </div>
-                <div className="flex items-center gap-2 text-[11px] text-muted-foreground pt-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-                  Generated from your last {trendData.length}{" "}
-                  {trendData.length === 1 ? "month" : "months"} of approved allocations
                 </div>
               </>
             ) : (

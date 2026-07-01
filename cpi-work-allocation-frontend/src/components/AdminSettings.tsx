@@ -1166,6 +1166,14 @@ const MainCategoryBlock = ({
   onOpenEdit, onDetachWorkType, onAddSubCategory, onAddWorkType, onCopyWorkTypes, onDeleteMain, onDeleteSub,
 }: MainCategoryBlockProps) => {
   const { main, directWorkTypes, subSections, totalWorkTypeCount, subCount } = section;
+
+  // Epic 7: sub-categories are collapsible accordions (default collapsed) so
+  // the outline isn't a permanently expanded wall of work-type chips.
+  const [collapsedSubs, setCollapsedSubs] = useState<Record<string, boolean>>({});
+  const isSubCollapsed = (name: string) => collapsedSubs[name] ?? true;
+  const toggleSub = (name: string) =>
+    setCollapsedSubs((prev) => ({ ...prev, [name]: !isSubCollapsed(name) }));
+
   return (
     <section className={isFirst ? "" : "border-t border-border"}>
       <div className="group flex items-start gap-3 px-5 pt-5 pb-3">
@@ -1210,11 +1218,18 @@ const MainCategoryBlock = ({
               />
             </div>
           )}
-          {subSections.map(({ sub, workTypes: subWTs }) => (
+          {subSections.map(({ sub, workTypes: subWTs }) => {
+            const collapsed = isSubCollapsed(sub.name);
+            return (
             <div key={sub.name} className="group relative pl-[88px] pr-5 pb-3">
               <div className="absolute top-0 bottom-0 w-[2px]"
                 style={{ left: "56px", background: "hsl(var(--primary-pastel))" }} />
               <div className="flex items-start gap-2 pt-2 pb-1.5">
+                <button onClick={() => toggleSub(sub.name)}
+                  aria-label={collapsed ? `Expand ${sub.name}` : `Collapse ${sub.name}`}
+                  className="flex items-center justify-center w-4 h-4 rounded shrink-0 text-muted-foreground mt-0.5">
+                  {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
                 <button onClick={() => onOpenEdit("subCategory", sub.name)}
                   className="text-[13px] font-semibold tracking-tight uppercase"
                   style={{ color: "hsl(var(--primary))", letterSpacing: "0.03em" }}>
@@ -1233,18 +1248,23 @@ const MainCategoryBlock = ({
                   </IconButton>
                 </div>
               </div>
-              {subWTs.length > 0 && (
-                <WorkTypeChipRow workTypes={subWTs} parentName={sub.name}
-                  onClick={(wt) => onOpenEdit("workType", wt.name)}
-                  onDetach={onDetachWorkType}
-                />
+              {!collapsed && (
+                <>
+                  {subWTs.length > 0 && (
+                    <WorkTypeChipRow workTypes={subWTs} parentName={sub.name}
+                      onClick={(wt) => onOpenEdit("workType", wt.name)}
+                      onDetach={onDetachWorkType}
+                    />
+                  )}
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <GhostAddButton onClick={() => onAddWorkType(sub.name)} label="Add work type" small />
+                    <GhostAddButton onClick={() => onCopyWorkTypes(sub.name)} label="Copy from…" small muted />
+                  </div>
+                </>
               )}
-              <div className="mt-1.5 flex items-center gap-2">
-                <GhostAddButton onClick={() => onAddWorkType(sub.name)} label="Add work type" small />
-                <GhostAddButton onClick={() => onCopyWorkTypes(sub.name)} label="Copy from…" small muted />
-              </div>
             </div>
-          ))}
+            );
+          })}
           {subCount === 0 && (
             <div className="px-5 pb-4 pl-[88px] flex items-center gap-2">
               <GhostAddButton onClick={() => onAddWorkType(main)} label="Add work type" small />
@@ -1337,8 +1357,15 @@ const SubCategoryRow = ({
   const cc = useClientsConfig();
   const [open, setOpen] = useState(false);
   const [assigned, setAssigned] = useState<string[]>(sub.clients ?? []);
+  const [clientQuery, setClientQuery] = useState("");
 
   useEffect(() => { setAssigned(sub.clients ?? []); }, [sub.clients]);
+
+  const visibleClients = useMemo(() => {
+    const q = clientQuery.trim().toLowerCase();
+    const sorted = [...cc.clients].sort();
+    return q ? sorted.filter((c) => c.toLowerCase().includes(q)) : sorted;
+  }, [cc.clients, clientQuery]);
 
   const wtCount = workTypes.filter((w) => w.parents.includes(sub.name)).length;
 
@@ -1394,8 +1421,26 @@ const SubCategoryRow = ({
                 No clients configured yet.
               </p>
             ) : (
+              <>
+              <div className="px-2.5 pt-2.5 pb-1.5">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    autoFocus
+                    placeholder="Search clients…"
+                    value={clientQuery}
+                    onChange={(e) => setClientQuery(e.target.value)}
+                    className="h-8 pl-8 text-[13px]"
+                  />
+                </div>
+              </div>
               <div className="max-h-56 overflow-y-auto py-1">
-                {[...cc.clients].sort().map((client) => {
+                {visibleClients.length === 0 && (
+                  <p className="px-3 py-2 text-[12px] text-muted-foreground">
+                    No clients match “{clientQuery}”.
+                  </p>
+                )}
+                {visibleClients.map((client) => {
                   const isAssigned = assigned.includes(client);
                   return (
                     <button
@@ -1420,6 +1465,7 @@ const SubCategoryRow = ({
                   );
                 })}
               </div>
+              </>
             )}
           </PopoverContent>
         </Popover>
@@ -1840,7 +1886,11 @@ const EditDialog = (props: EditDialogProps) => {
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent
+        className={`max-h-[85vh] overflow-y-auto ${
+          target.kind === "subCategory" ? "max-w-3xl" : "max-w-2xl"
+        }`}
+      >
         {target.kind === "team" && (
           <EditSimple
             kind="team"
@@ -2237,12 +2287,20 @@ const EditSubCategory = ({
   const workTypesHere = cc.workTypes.filter((w) => w.parents.includes(name));
 
   const [assignedClients, setAssignedClients] = useState<string[]>(sub?.clients ?? []);
+  const [clientQuery, setClientQuery] = useState("");
 
   useEffect(() => {
     setValue(name);
     const s = cc.subCategories.find((x) => x.name === name);
     setAssignedClients(s?.clients ?? []);
+    setClientQuery("");
   }, [name, cc.subCategories]);
+
+  const visibleClients = useMemo(() => {
+    const q = clientQuery.trim().toLowerCase();
+    const sorted = [...cc.clients].sort();
+    return q ? sorted.filter((c) => c.toLowerCase().includes(q)) : sorted;
+  }, [cc.clients, clientQuery]);
 
   const toggleClient = (clientName: string) =>
     setAssignedClients((prev) =>
@@ -2325,8 +2383,23 @@ const EditSubCategory = ({
               No clients configured yet.
             </p>
           ) : (
-            <div className="mt-2 rounded-md max-h-[200px] overflow-y-auto divide-y divide-border border border-border">
-              {[...cc.clients].sort().map((client) => {
+            <>
+            <div className="relative mt-2">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search clients…"
+                value={clientQuery}
+                onChange={(e) => setClientQuery(e.target.value)}
+                className="h-9 pl-8 text-[13px]"
+              />
+            </div>
+            <div className="mt-2 rounded-md max-h-[260px] overflow-y-auto divide-y divide-border border border-border">
+              {visibleClients.length === 0 && (
+                <p className="px-3 py-2 text-[12px] text-muted-foreground">
+                  No clients match “{clientQuery}”.
+                </p>
+              )}
+              {visibleClients.map((client) => {
                 const isAssigned = assignedClients.includes(client);
                 return (
                   <button key={client} type="button" onClick={() => toggleClient(client)}
@@ -2347,6 +2420,7 @@ const EditSubCategory = ({
                 );
               })}
             </div>
+            </>
           )}
         </div>
       </div>

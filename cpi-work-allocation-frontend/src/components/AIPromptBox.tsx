@@ -21,6 +21,13 @@ interface AIPromptBoxProps {
   isProcessing: boolean;
   minimized: boolean;
   initialText?: string;
+  /**
+   * Fired whenever the user manually edits the textarea (typing / paste).
+   * NOT fired for programmatic `initialText` seeding. Used by the parent to
+   * mark the prompt as "manually authored" so it is no longer treated as
+   * Auto-Generate output (percentage normalization differs — see Workspace).
+   */
+  onEdit?: () => void;
   /** Rendered above the heading inside the centering wrapper so all content centers as a group. */
   headerSlot?: ReactNode;
 }
@@ -30,6 +37,7 @@ const AIPromptBox = ({
   isProcessing,
   minimized,
   initialText,
+  onEdit,
   headerSlot,
 }: AIPromptBoxProps) => {
   const [text, setText] = useState(initialText ?? "");
@@ -129,15 +137,17 @@ const AIPromptBox = ({
 
   const handleSubmit = useCallback(() => {
     if (!text.trim() || isProcessing) return;
+    // State retention (Epic 1): do NOT clear the textarea on submit. The
+    // text persists — whether the parse succeeded, produced cards, or
+    // errored out on a bad format — until the user clears it themselves.
     onSubmit(text.trim());
-    setText("");
-    setCaret(0);
   }, [text, isProcessing, onSubmit]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setText(e.target.value);
     setCaret(e.target.selectionEnd ?? e.target.value.length);
-  }, []);
+    onEdit?.();
+  }, [onEdit]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

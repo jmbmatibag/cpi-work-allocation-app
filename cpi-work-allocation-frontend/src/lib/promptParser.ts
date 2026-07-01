@@ -379,26 +379,54 @@ function defaultParentsFromTaxonomy(
  * them correctly.
  *
 /**
- * True when `keyword` appears in `text` with a left-side word
- * boundary. Multi-word phrases fall back to plain substring check.
+ * Reduce a single word to a rough base form by stripping common
+ * inflectional / derivational suffixes. Deliberately lightweight (not a
+ * real Porter stemmer) — just enough that "testing", "tests", "tested"
+ * and "test" all collapse toward the same "test" stem.
  *
- * Important: the right side is intentionally unbounded so the
- * keyword matches natural-language suffixes. "enhance" matches
- * "enhancement", "enhanced", "enhancing", "enhancements". Without
- * this, users who write plurals or conjugations get misclassified —
- * the bug that sent "#Geniisys enhancements" to the fallback default.
+ * Suffixes are ordered longest-first so "development" → "develop" strips
+ * "ment" before the shorter "s"/"ed" rules can nibble the wrong ending.
+ * A minimum remaining length guards against over-stemming short words
+ * ("les" should not become "l").
+ */
+function stemWord(word: string): string {
+  const w = word.toLowerCase();
+  const suffixes = ["ment", "ing", "ers", "er", "ed", "es", "s"];
+  for (const suf of suffixes) {
+    if (w.endsWith(suf) && w.length - suf.length >= 3) {
+      return w.slice(0, -suf.length);
+    }
+  }
+  return w;
+}
+
+/**
+ * Epic 3 — loosened keyword matching. Previously this required the exact
+ * keyword to appear at a left word boundary, so a rule keyword "Testing"
+ * failed to catch "test" or "tests". Now matching is stem-based and
+ * case-insensitive: the keyword is reduced to its base form and matched as
+ * a substring of the text, so "Testing" catches "test", "tests", "tested",
+ * and "testing".
  *
- * The left boundary is kept strict so "plan" doesn't match
- * "aeroplan" or "airplane". In practice the right-side openness is
- * safe for a curated keyword list: short keywords like "qa" or "ci"
- * should be written with explicit word forms anyway.
+ * - Multi-word phrases → plain case-insensitive substring (unchanged intent).
+ * - Very short keywords (stem < 3 chars, e.g. "qa", "ci", "hr") keep a
+ *   strict left word boundary so they don't match inside unrelated words.
+ * - Everything else → substring match on the keyword's stem.
  *
- * Both sides are lowercased by the caller.
+ * This is intentionally permissive per the QA request to loosen the engine.
  */
 function matchesKeyword(text: string, keyword: string): boolean {
-  if (keyword.includes(" ")) return text.includes(keyword);
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[^a-z0-9])${escaped}`, "i").test(text);
+  const lowerText = text.toLowerCase();
+  const lowerKw = keyword.toLowerCase();
+
+  if (lowerKw.includes(" ")) return lowerText.includes(lowerKw);
+
+  const stem = stemWord(lowerKw);
+  if (stem.length < 3) {
+    const escaped = lowerKw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^a-z0-9])${escaped}`, "i").test(lowerText);
+  }
+  return lowerText.includes(stem);
 }
 
 /**

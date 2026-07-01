@@ -9,7 +9,6 @@ import {
   Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Popover,
   PopoverContent,
@@ -110,7 +109,15 @@ const NotificationBell = () => {
             </p>
           </div>
         ) : (
-          <ScrollArea className="max-h-[400px]">
+          <div
+            className={cn(
+              "max-h-[400px] overflow-y-auto scroll-smooth overscroll-contain",
+              // Minimal, unobtrusive scrollbar (no plugin needed).
+              "[&::-webkit-scrollbar]:w-1.5",
+              "[&::-webkit-scrollbar-track]:bg-transparent",
+              "[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border",
+            )}
+          >
             <div className="divide-y">
               {notifications.map((n) => {
                 const { icon: Icon, className: iconClass } = TYPE_ICON[n.type];
@@ -160,7 +167,7 @@ const NotificationBell = () => {
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         )}
       </PopoverContent>
     </Popover>

@@ -257,6 +257,20 @@ export function findLeadingTime(text: string): TimeMatch | null {
 // ── Resolution ────────────────────────────────────────────────────────────────
 
 /**
+ * Deduct a 1-hour lunch break from any single continuous task that spans
+ * 9 hours or more (Epic 4). A stretch that long necessarily straddles the
+ * lunch hour, so the raw clock duration overstates actual worked time.
+ * Shorter tasks are returned unchanged.
+ */
+const LUNCH_THRESHOLD_MIN = 9 * 60;
+const LUNCH_BREAK_MIN = 60;
+function deductLunch(durationMinutes: number): number {
+  return durationMinutes >= LUNCH_THRESHOLD_MIN
+    ? durationMinutes - LUNCH_BREAK_MIN
+    : durationMinutes;
+}
+
+/**
  * Resolve all smart lines with computed durations.
  *
  * Pass `defaultEndOfDay` to control what the last timeline entry is
@@ -285,7 +299,7 @@ export function resolveSmartLines(
       return {
         ...line,
         isTimeOnly: false,
-        durationMinutes: Math.max(0, dur),
+        durationMinutes: deductLunch(Math.max(0, dur)),
         startTime: toHHMM(line.timeRange.start),
         endTime: toHHMM(line.timeRange.end),
       };
@@ -324,7 +338,7 @@ export function resolveSmartLines(
       return {
         ...line,
         isTimeOnly: false,
-        durationMinutes: Math.max(0, dur),
+        durationMinutes: deductLunch(Math.max(0, dur)),
         startTime: toHHMM(line.leadingTime.time),
         endTime: toHHMM(endT),
       };

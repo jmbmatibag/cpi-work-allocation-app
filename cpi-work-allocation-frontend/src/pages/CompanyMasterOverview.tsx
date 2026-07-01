@@ -576,7 +576,7 @@ const CompanyMasterOverview = () => {
             Master Overview
           </h1>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-foreground/75">
+            <span className="text-xl font-semibold text-foreground/80">
               Cross-team work allocation
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-0.5 text-xs font-bold text-primary ring-1 ring-primary/20">

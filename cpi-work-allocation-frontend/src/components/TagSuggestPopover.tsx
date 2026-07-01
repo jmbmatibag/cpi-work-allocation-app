@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { Hash, AtSign } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { AutocompleteItem } from "@/hooks/useTagAutocomplete";
 
 /**
@@ -61,33 +62,21 @@ export const TagSuggestPopover = ({
     <div
       role="listbox"
       aria-label={`${triggerLabel} suggestions`}
-      className="fixed z-50 rounded-lg shadow-lg overflow-hidden"
+      className="fixed z-50 rounded-lg shadow-lg overflow-hidden border border-border bg-popover text-popover-foreground"
       style={{
         // Render just below the caret, offset by line-height so we
         // don't overlap the text the user is typing.
         top: top + lineHeight + 4,
         left,
-        background: "hsl(0 0% 100%)",
-        border: "1px solid hsl(220 13% 88%)",
         minWidth: 220,
         maxWidth: 320,
         maxHeight: 280,
       }}
     >
-      <div
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wider font-semibold"
-        style={{
-          background: "hsl(220 14% 97%)",
-          color: "hsl(220 10% 50%)",
-          borderBottom: "1px solid hsl(220 13% 92%)",
-        }}
-      >
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] uppercase tracking-wider font-semibold bg-muted text-muted-foreground border-b border-border">
         <Icon className="h-3 w-3" />
         <span>{triggerLabel}s</span>
-        <span
-          className="ml-auto text-[10px] font-normal tabular-nums"
-          style={{ color: "hsl(220 8% 60%)" }}
-        >
+        <span className="ml-auto text-[10px] font-normal tabular-nums text-muted-foreground/70">
           ↑↓ navigate · ⇥ accept
         </span>
       </div>
@@ -110,21 +99,22 @@ export const TagSuggestPopover = ({
                 e.preventDefault();
                 onSelect(idx);
               }}
-              className="flex items-baseline justify-between gap-2 px-2.5 py-1.5 cursor-pointer transition-colors"
-              style={{
-                background: active ? "hsl(var(--primary-pastel))" : "transparent",
-                color: active ? "hsl(var(--primary))" : "hsl(222 20% 15%)",
-              }}
+              className={cn(
+                "flex items-baseline justify-between gap-2 px-2.5 py-1.5 cursor-pointer transition-colors",
+                active
+                  ? "bg-primary/10 text-primary"
+                  : "text-popover-foreground hover:bg-muted",
+              )}
             >
               <span className="text-[13px] font-medium truncate">
                 {item.label}
               </span>
               {item.sublabel && (
                 <span
-                  className="text-[11px] truncate shrink-0"
-                  style={{
-                    color: active ? "hsl(var(--primary))" : "hsl(220 10% 55%)",
-                  }}
+                  className={cn(
+                    "text-[11px] truncate shrink-0",
+                    active ? "text-primary" : "text-muted-foreground",
+                  )}
                 >
                   {item.sublabel}
                 </span>

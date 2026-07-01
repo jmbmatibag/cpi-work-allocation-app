@@ -843,10 +843,23 @@ function mergeClassifications(
     const resolvedBulletClients = b.clients.map(
       raw => opts.knownClients.find(c => c.toLowerCase() === raw.toLowerCase()) ?? raw,
     );
+
+    // Project-client fan-out (Epic 1): when the bullet has NO explicit
+    // @client but the classified sub-category has assigned project clients,
+    // split the percentage equally across them — e.g. "#Project1 support -
+    // 100%" with Project1 = [C1, C2] → two cards at 50% each. Mirrors the
+    // rule parser's Scenario A so both parse paths behave identically.
+    const projectClients =
+      resolvedBulletClients.length === 0 && c.subCategory
+        ? opts.taxonomy.clientsBySubCategory?.[c.subCategory] ?? []
+        : [];
+
     const clients =
       resolvedBulletClients.length > 1
         ? resolvedBulletClients
-        : [c.client || fallbackClient];
+        : projectClients.length > 0
+          ? [...projectClients]
+          : [c.client || fallbackClient];
 
     const percentageEach = b.percentage / clients.length;
 

@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Sparkles, Printer, FileText, CheckCircle2 } from "lucide-react";
+import { Printer, FileText, CheckCircle2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   useAllocations,
@@ -284,7 +284,7 @@ const PerformanceReview = () => {
                 onClick={generate}
                 className="gap-2 bg-gradient-to-r from-primary to-primary/80 shadow-md shadow-primary/20"
               >
-                <Sparkles className="h-4 w-4" /> Generate Accomplishment Report
+                Generate Accomplishment Report
               </Button>
             </div>
           </CardContent>
@@ -295,7 +295,6 @@ const PerformanceReview = () => {
         {matrix === null ? (
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-              <Sparkles className="h-12 w-12 mb-4 opacity-30" />
               <p className="text-lg font-medium">Ready when you are</p>
               <p className="text-sm text-center max-w-md">
                 Select a timeframe and click{" "}
@@ -383,8 +382,7 @@ const PerformanceReview = () => {
             </Card>
 
             <p className="text-xs text-muted-foreground no-print">
-              <Sparkles className="h-3 w-3 inline mr-1" />
-              Bullets are AI-synthesized from approved allocations and
+              Bullets are synthesized from approved allocations and
               corroborated by daily journal entries where available.
             </p>
           </>
