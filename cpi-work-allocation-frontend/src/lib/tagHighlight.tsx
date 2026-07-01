@@ -13,19 +13,51 @@ import { type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
+ * Separator class used between the words of a multi-word tag name: the
+ * taxonomy's own punctuation (comma, ampersand, slash, en/em dash, hyphen)
+ * plus arbitrary surrounding whitespace. Keeps this consistent with the
+ * prompt parser's preprocessMultiWordTags so highlighting, detection, and
+ * parsing all recognise the same variants.
+ */
+const TAG_SEPARATOR = "[\\s,&/–—-]+";
+
+/**
+ * Build a whitespace-/punctuation-tolerant regex fragment matching a
+ * multi-word taxonomy name after a "#". Splits the name into its alphanumeric
+ * word runs, then rejoins them with TAG_SEPARATOR so a user can type any of:
+ *   #Sales, Marketing & BD      (canonical)
+ *   #Sales,Marketing & BD       (missing space)
+ *   #Sales , Marketing  &  BD   (extra padding)
+ * and all match as one token. Returns null when the name has no
+ * alphanumeric content.
+ */
+export function multiWordTagPattern(name: string): string | null {
+  const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
+  if (words.length === 0) return null;
+  return words
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(TAG_SEPARATOR);
+}
+
+/**
  * Build a highlight regex that includes known multi-word taxonomy names as
- * explicit alternates so "#Quick Policy" is highlighted as a single token
- * rather than stopping at the space.
+ * explicit alternates so "#Quick Policy" or "#Sales, Marketing & BD" is
+ * highlighted as a single token rather than stopping at the first space or
+ * comma. Alternates are matched tolerantly (see multiWordTagPattern).
  *
- * @param multiWordNames  Names that contain spaces (e.g. ["Quick Policy",
- *                        "General Work"]).  Pass an empty array when unknown.
+ * @param multiWordNames  Names carrying a separator (e.g. ["Quick Policy",
+ *                        "Sales, Marketing & BD"]). Pass an empty array when
+ *                        unknown.
  */
 export function buildHighlightRegex(multiWordNames: readonly string[]): RegExp {
+  // Longest first so "Quick Policy Plus" wins over "Quick Policy".
   const sorted = [...multiWordNames].sort((a, b) => b.length - a.length);
-  const escaped = sorted.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const alternates = sorted
+    .map(multiWordTagPattern)
+    .filter((p): p is string => p !== null);
   const tagBody =
-    escaped.length > 0
-      ? `(?:${escaped.join("|")}|[A-Za-z][A-Za-z0-9_/-]*)`
+    alternates.length > 0
+      ? `(?:${alternates.join("|")}|[A-Za-z][A-Za-z0-9_/-]*)`
       : "[A-Za-z][A-Za-z0-9_/-]*";
 
   return new RegExp(

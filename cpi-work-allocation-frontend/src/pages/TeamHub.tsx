@@ -16,6 +16,7 @@ import { useEmployees } from "@/contexts/EmployeesContext";
 import type { Employee } from "@/contexts/EmployeesContext";
 import type { WorkStreamData, ActivityData } from "@/components/Workspace";
 import { cn } from "@/lib/utils";
+import { multiWordTagPattern } from "@/lib/tagHighlight";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1408,20 +1409,26 @@ function extractActivityTags(text: string) {
 }
 
 function renderTaggedText(text: string, knownCategories: readonly string[]) {
-  // Normalize multi-word category tags before tokenizing.
-  // "#Quick Policy Support" → "#Quick-Policy-Support" so the
-  // single-word regex can capture the full tag.
+  // Normalize multi-word category tags before tokenizing, tolerating the
+  // whitespace/punctuation variants users actually type ("#Quick Policy",
+  // "#Sales, Marketing & BD", "#Sales , Marketing & BD"). Each collapsed
+  // slug maps back to its canonical name so the rendered tag keeps its real
+  // punctuation instead of a lossy hyphen slug.
   let normalized = text;
+  const canonicalBySlug = new Map<string, string>();
   const sorted = [...knownCategories]
-    .filter((c) => c.includes(" "))
+    .filter((c) => /[^A-Za-z0-9]/.test(c))
     .sort((a, b) => b.length - a.length); // longest first to avoid partial matches
   for (const cat of sorted) {
-    const escaped = cat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = multiWordTagPattern(cat);
+    if (!pattern) continue;
     const re = new RegExp(
-      `(?<![A-Za-z0-9])#${escaped}(?![A-Za-z0-9_/-])`,
+      `(?<![A-Za-z0-9])#${pattern}(?![A-Za-z0-9_/-])`,
       "gi",
     );
-    normalized = normalized.replace(re, "#" + cat.replace(/\s+/g, "-"));
+    const slug = cat.replace(/[^A-Za-z0-9/]+/g, "-").replace(/^-|-$/g, "");
+    canonicalBySlug.set(slug.toLowerCase(), cat);
+    normalized = normalized.replace(re, "#" + slug);
   }
 
   const TOKEN_RE = /(@[A-Za-z][A-Za-z0-9_-]*)|(#[A-Za-z][A-Za-z0-9_/-]*)/g;
@@ -1442,12 +1449,13 @@ function renderTaggedText(text: string, knownCategories: readonly string[]) {
         </span>,
       );
     } else {
+      const canonical = canonicalBySlug.get(tok.slice(1).toLowerCase());
       nodes.push(
         <span
           key={m.index}
           className="font-medium text-violet-700 bg-violet-50 rounded px-0.5 dark:text-violet-300 dark:bg-violet-950/50"
         >
-          {tok.replace(/-/g, " ")}
+          {canonical ? "#" + canonical : tok.replace(/-/g, " ")}
         </span>,
       );
     }

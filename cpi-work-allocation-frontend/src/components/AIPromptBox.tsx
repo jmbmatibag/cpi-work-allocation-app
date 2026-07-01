@@ -116,7 +116,7 @@ const AIPromptBox = ({
   }, []);
 
   const highlightRegex = useMemo(
-    () => buildHighlightRegex(tagItems.filter((i) => i.value.includes(" ")).map((i) => i.value)),
+    () => buildHighlightRegex(tagItems.filter((i) => /[^A-Za-z0-9]/.test(i.value)).map((i) => i.value)),
     [tagItems],
   );
 

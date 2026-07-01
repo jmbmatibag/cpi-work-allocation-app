@@ -146,7 +146,7 @@ const DescriptionField = ({ value, onChange }: DescriptionFieldProps) => {
     const multiWord = [
       ...mainCategories,
       ...subCategories.map((s) => s.name),
-    ].filter((n) => n.includes(" "));
+    ].filter((n) => /[^A-Za-z0-9]/.test(n));
     return buildHighlightRegex(multiWord);
   }, [mainCategories, subCategories]);
 

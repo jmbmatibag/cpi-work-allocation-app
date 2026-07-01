@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/tooltip";
 import WorkspaceTipModal from "@/components/WorkspaceTipModal";
 import { getOnboardingGuide } from "@/lib/onboardingGuides";
-import { buildHighlightRegex, renderTagged } from "@/lib/tagHighlight";
+import { buildHighlightRegex, multiWordTagPattern, renderTagged } from "@/lib/tagHighlight";
 import {
   Save,
   BookOpen,
@@ -161,22 +161,32 @@ function extractTokens(
   knownMultiWordTags: readonly string[] = [],
 ) {
   let processed = text;
+  // Map from hyphen-slug (lowercased) → canonical taxonomy name, so a
+  // detected multi-word tag is reported with its real punctuation
+  // ("Sales, Marketing & BD") rather than a lossy slug ("Sales Marketing BD"),
+  // which would otherwise never match the known-category list.
+  const canonicalBySlug = new Map<string, string>();
   const sorted = [...knownMultiWordTags]
-    .filter((n) => n.includes(" "))
+    .filter((n) => /[^A-Za-z0-9]/.test(n))
     .sort((a, b) => b.length - a.length);
   for (const name of sorted) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const re = new RegExp(
-      `(?<![A-Za-z0-9])#${escaped}(?![A-Za-z0-9])`,
-      "gi",
-    );
-    processed = processed.replace(re, "#" + name.replace(/\s+/g, "-"));
+    const pattern = multiWordTagPattern(name);
+    if (!pattern) continue;
+    const re = new RegExp(`(?<![A-Za-z0-9])#${pattern}(?![A-Za-z0-9])`, "gi");
+    // Collapse to a slug of only characters CATEGORY_TAG_RE can capture
+    // (alphanumerics, slash, hyphen). Strips commas/ampersands that would
+    // otherwise truncate the captured token at the first special char.
+    const slug = name.replace(/[^A-Za-z0-9/]+/g, "-").replace(/^-|-$/g, "");
+    canonicalBySlug.set(slug.toLowerCase(), name);
+    processed = processed.replace(re, "#" + slug);
   }
   const clients = new Set<string>();
   const categories = new Set<string>();
   for (const m of processed.matchAll(CLIENT_TAG_RE)) clients.add(m[1]);
-  for (const m of processed.matchAll(CATEGORY_TAG_RE))
-    categories.add(m[1].replace(/-/g, " "));
+  for (const m of processed.matchAll(CATEGORY_TAG_RE)) {
+    const canonical = canonicalBySlug.get(m[1].toLowerCase());
+    categories.add(canonical ?? m[1].replace(/-/g, " "));
+  }
   return { clients: [...clients], categories: [...categories] };
 }
 
@@ -226,7 +236,7 @@ function SmartJournalLine({
   // Skip rendering when the line is invalid (red text) or time-only (mono font)
   // so those states keep their own visual treatment.
   const highlightRegex = useMemo(
-    () => buildHighlightRegex(tagItems.filter((i) => i.value.includes(" ")).map((i) => i.value)),
+    () => buildHighlightRegex(tagItems.filter((i) => /[^A-Za-z0-9]/.test(i.value)).map((i) => i.value)),
     [tagItems],
   );
   const taggedContent = useMemo(
