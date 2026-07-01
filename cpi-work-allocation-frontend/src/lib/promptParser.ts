@@ -521,75 +521,86 @@ function scopeRulesToCategory(
 }
 
 /**
- * Pick the best work type for a tag-resolved activity, using the
- * description's keywords to refine beyond the parent's static
- * default.
+ * Pick the work type for a tag-resolved activity purely from keyword evidence
+ * in the description. The contract (per product decision):
  *
- * Problem this solves: when a user writes
- *   "@AUII Implementation for Geniisys #Geniisys - 40%"
- * the tag `#Geniisys` resolves to (Projects, Geniisys) but without
- * this step, the work type defaults to whatever the taxonomy seed
- * listed first under Geniisys — often "Meetings" alphabetically
- * rather than "Implementation" semantically. Users expect the
- * description's keyword "Implementation" to win.
+ *   read description → match keywords against the scoped inference rules →
+ *   a rule matches → use its work type
+ *   nothing matches → return "" (BLANK)
  *
- * Algorithm:
- *   1. Run inferCategory over the description.
- *   2. If the inferred work type is valid under the resolved
- *      parent (appears in `workTypesByParent[parent]`), use it.
- *   3. Otherwise fall back to the parent's default (the work type
- *      resolveTag already picked).
+ * We NEVER fall back to a parent default. A guessed default silently passes a
+ * card through manager review looking "detected" when it wasn't; a blank Work
+ * Type makes the gap visible so the user fixes it before submitting.
  *
- * Case-insensitive parent lookup so "geniisys" in the map matches
- * "Geniisys" from the tag resolution.
+ * Two things make this correct where the naive version failed:
+ *
+ *  1. Ignore the structural names when scoring — the tag-resolved category and
+ *     sub category, plus known client codes. Auto-generated rules embed the
+ *     parent name (e.g. "geniisys") as a keyword, and Scenario-A client rules
+ *     embed the client code (e.g. "afpgen"); both match EVERY scoped rule
+ *     equally, so counting them just produces ties that get won by declaration
+ *     order. That is exactly why "#Geniisys devops management" could land on
+ *     "Debugging": only the shared "geniisys" keyword scored, so the first
+ *     Geniisys rule won instead of the one whose keywords ("devops",
+ *     "management") actually appear. Excluding them lets the real work-type
+ *     keywords decide (`ignoreNames`).
+ *
+ *  2. Only consider rules whose work type is selectable under this parent
+ *     (present in `workTypesByParent[parent]`), so a matching-but-unselectable
+ *     work type can't beat a matching-and-valid one, and the result is always
+ *     something the dropdown can actually show.
+ *
+ * Case-insensitive throughout.
  */
 function refineWorkTypeForParent(
   text: string,
   parent: string,
-  fallbackWorkType: string,
+  ignoreNames: readonly (string | null)[],
   inferenceRules: readonly InferenceRule[],
   taxonomy: TaxonomySnapshot | undefined,
 ): string {
-  const inferred = inferCategory(text, inferenceRules);
-  if (!taxonomy) return fallbackWorkType;
-
-  // Case-insensitive key lookup — the taxonomy map might use
-  // exact taxonomy casing while the parent name we got from
-  // resolveTag already matches that casing. Still, defensive.
-  const validList =
-    taxonomy.workTypesByParent[parent] ??
-    taxonomy.workTypesByParent[
-      Object.keys(taxonomy.workTypesByParent).find(
-        (k) => k.toLowerCase() === parent.toLowerCase(),
-      ) ?? ""
-    ];
-
-  if (!validList || validList.length === 0) return fallbackWorkType;
-
-  // First pass: exact case-insensitive match. Handles the
-  // simple case where the inferred work type IS one of the
-  // valid ones (e.g. inferred "Testing", parent has "Testing").
-  const inferredLower = inferred.workType.toLowerCase();
-  const exact = validList.find(
-    (w) => w.toLowerCase() === inferredLower,
+  // Parent/category/sub names carry no work-type signal — drop them from scoring.
+  const ignore = new Set(
+    ignoreNames
+      .filter((n): n is string => !!n)
+      .map((n) => n.toLowerCase().trim()),
   );
-  if (exact) return exact;
 
-  // No keyword evidence maps to a valid work type under this parent.
-  //
-  // Fall back to the parent's configured default work type (what
-  // resolveTag already picked) — NEVER return empty. An empty work type
-  // was the top production complaint: a tag resolved cleanly but the
-  // card came back with a blank Work Type ("it didn't detect"). A
-  // sensible parent default is always better than blank, and the user
-  // can still override it in the review step.
-  //
-  // We deliberately do NOT substring-fuzz here (e.g. inferred
-  // "Development" → parent's "Product Development"): that promoted
-  // unrelated work types and mis-tagged cards. Exact match wins; if the
-  // keyword evidence isn't a clean fit under this parent, we defer to
-  // the parent default rather than guessing.
-  return fallbackWorkType;
+  // The set of work types selectable under this parent (lowercased), or null
+  // when the taxonomy doesn't scope this parent — then we trust the raw match.
+  const validList = taxonomy
+    ? taxonomy.workTypesByParent[parent] ??
+      taxonomy.workTypesByParent[
+        Object.keys(taxonomy.workTypesByParent).find(
+          (k) => k.toLowerCase() === parent.toLowerCase(),
+        ) ?? ""
+      ]
+    : undefined;
+  const validSet =
+    validList && validList.length > 0
+      ? new Set(validList.map((w) => w.toLowerCase()))
+      : null;
+
+  // Highest-scoring rule whose work type is valid under the parent wins;
+  // ties break to the earliest rule (stable — declaration order).
+  let best: InferenceRule | null = null;
+  let bestScore = 0;
+  for (const rule of inferenceRules) {
+    if (validSet && !validSet.has(rule.workType.toLowerCase())) continue;
+    let score = 0;
+    for (const kw of rule.keywords) {
+      if (ignore.has(kw.toLowerCase().trim())) continue;
+      if (matchesKeyword(text, kw)) score++;
+    }
+    if (score > bestScore) {
+      best = rule;
+      bestScore = score;
+    }
+  }
+
+  // Nothing matched (or nothing matched that's selectable here) → BLANK.
+  if (!best || bestScore === 0) return "";
+  return best.workType;
 }
 
 // =====================================================================
@@ -821,7 +832,7 @@ export function parseWorkAllocation(
           workType = refineWorkTypeForParent(
             `${headerText} ${bulletLines.join(" ")}`,
             subCategory ?? workCategory,
-            resolved.workType,
+            [resolved.category, resolved.subCategory, ...knownClients],
             scopeRulesToCategory(inferenceRules, resolved.category, resolved.subCategory),
             taxonomy,
           );
@@ -955,7 +966,7 @@ export function parseWorkAllocation(
         workType = refineWorkTypeForParent(
           description,
           subCategory ?? workCategory,
-          resolved.workType,
+          [resolved.category, resolved.subCategory, ...knownClients],
           scopeRulesToCategory(inferenceRules, resolved.category, resolved.subCategory),
           taxonomy,
         );

@@ -746,28 +746,27 @@ describe("Phase P hybrid tag + inference — work type refinement", () => {
     expect(result[0].workType).toBe("Planning");
   });
 
-  it("falls back to parent default when no description keyword matches", () => {
+  it("leaves work type BLANK when no description keyword matches", () => {
+    // Product decision: no keyword match → empty work type (never a guessed
+    // default), so the gap is visible to the user and their reviewing manager.
     const result = parseWorkAllocation(
       "- Work #Geniisys - 50%",
       phasePOptions,
     );
     expect(result[0].subCategory).toBe("Geniisys");
-    // phasePTaxonomy has Geniisys default = "Implementation"
-    expect(result[0].workType).toBe("Implementation");
+    expect(result[0].workType).toBe("");
   });
 
-  it("rejects inferred work type not valid under the tagged parent", () => {
-    // "security" inference rule targets IT/Security. Tag says
-    // Geniisys. Security is NOT a work type under Geniisys, so the
-    // inferred Security is rejected and we fall back to the
-    // Geniisys default (Implementation in this fixture).
+  it("leaves work type BLANK when the matched work type isn't valid under the tagged parent", () => {
+    // "security" inference rule targets IT/Security; "review" targets
+    // Projects/Review. Tag says Geniisys, which lists neither Security nor
+    // Review, so no selectable work type matches → blank (not a default).
     const result = parseWorkAllocation(
       "- Security review #Geniisys - 20%",
       phasePOptions,
     );
     expect(result[0].subCategory).toBe("Geniisys");
-    expect(result[0].workType).not.toBe("Security");
-    expect(result[0].workType).toBe("Implementation");
+    expect(result[0].workType).toBe("");
   });
 
   it("hierarchical header with tag — keyword refinement applies to bullets", () => {
@@ -888,5 +887,81 @@ describe("Keyword stemming — plural and conjugation suffixes", () => {
     const r = inferCategory("aeroplanning is a real word");
     // Should NOT match "planning" rule → falls to General Work default
     expect(r.workType).not.toBe("Planning");
+  });
+});
+
+// ---------------------------------------------------------------------
+// Live regression — the "#Geniisys devops management" → "Debugging" bug.
+// ---------------------------------------------------------------------
+// In production, auto-generated rules embed the sub-category name as a
+// keyword (e.g. "geniisys"). When the user tags #Geniisys, that shared
+// keyword matches EVERY Geniisys rule equally, so a rule with no other
+// matching keyword (Debugging) could tie and win by declaration order —
+// even though "devops management" is right there in the text and there is
+// a DevOps Management rule + work type. The parent keyword must not count.
+describe("Live regression — tagged sub-category work-type selection", () => {
+  const geniisysTaxonomy: TaxonomySnapshot = {
+    subCategoryToMain: { Geniisys: "Projects" },
+    defaultWorkTypeByParent: { Projects: "Development", Geniisys: "Debugging" },
+    workTypesByParent: {
+      Projects: ["Development", "Testing"],
+      // "Debugging" is listed first — the pre-fix default/tie would pick it.
+      Geniisys: ["Debugging", "DevOps Management", "Enhancement", "Testing"],
+    },
+  };
+  // Auto-generated-style rules: each carries the parent name "geniisys" plus
+  // the tokenized work-type name.
+  const geniisysRules: InferenceRule[] = [
+    { keywords: ["debugging", "debug", "geniisys"], category: "Projects", subCategory: "Geniisys", workType: "Debugging" },
+    { keywords: ["devops management", "devops", "management", "geniisys"], category: "Projects", subCategory: "Geniisys", workType: "DevOps Management" },
+    { keywords: ["enhancement", "enhance", "geniisys"], category: "Projects", subCategory: "Geniisys", workType: "Enhancement" },
+  ];
+  const opts = {
+    defaultTeam: "IT/Platforms",
+    knownClients: ["AFPGEN"],
+    fallbackClient: "N/A",
+    taxonomy: geniisysTaxonomy,
+    inferenceRules: geniisysRules,
+  };
+
+  it("'#Geniisys devops management @AFPGEN' resolves to DevOps Management, not Debugging", () => {
+    const r = parseWorkAllocation("- #Geniisys devops management @AFPGEN - 100%", opts);
+    expect(r[0]).toMatchObject({
+      workCategory: "Projects",
+      subCategory: "Geniisys",
+      workType: "DevOps Management",
+      client: "AFPGEN",
+    });
+  });
+
+  it("only the shared parent keyword present → work type BLANK (no guessed default)", () => {
+    // "geniisys" is the only matching keyword; it's excluded from scoring, so
+    // nothing work-type-specific matched → blank, NOT the "Debugging" default.
+    const r = parseWorkAllocation("- #Geniisys work for @AFPGEN - 100%", opts);
+    expect(r[0].subCategory).toBe("Geniisys");
+    expect(r[0].workType).toBe("");
+  });
+
+  it("stemmed variant 'debugging the module' still lands on Debugging", () => {
+    const r = parseWorkAllocation("- #Geniisys debugging the login module - 50%", opts);
+    expect(r[0].workType).toBe("Debugging");
+  });
+
+  it("Scenario-A client rules don't force a work type: bare @client → BLANK", () => {
+    // Real DBs also hold client rules keyed on [client, subCategory] for every
+    // linked work type. With no work-type keyword in the text, only the client
+    // code + parent name match — both excluded — so the result must be blank,
+    // not whichever client rule happens to be declared first.
+    const clientRuleOpts = {
+      ...opts,
+      inferenceRules: [
+        { keywords: ["afpgen", "geniisys"], category: "Projects", subCategory: "Geniisys", workType: "Debugging" },
+        { keywords: ["afpgen", "geniisys"], category: "Projects", subCategory: "Geniisys", workType: "DevOps Management" },
+        ...geniisysRules,
+      ] as InferenceRule[],
+    };
+    const r = parseWorkAllocation("- #Geniisys handled items for @AFPGEN - 100%", clientRuleOpts);
+    expect(r[0].client).toBe("AFPGEN");
+    expect(r[0].workType).toBe("");
   });
 });
