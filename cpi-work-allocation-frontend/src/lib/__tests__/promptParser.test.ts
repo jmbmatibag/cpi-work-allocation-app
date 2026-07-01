@@ -906,15 +906,19 @@ describe("Live regression — tagged sub-category work-type selection", () => {
     workTypesByParent: {
       Projects: ["Development", "Testing"],
       // "Debugging" is listed first — the pre-fix default/tie would pick it.
-      Geniisys: ["Debugging", "DevOps Management", "Enhancement", "Testing"],
+      // "Meetings" is valid here but its rule lives under General Work below.
+      Geniisys: ["Debugging", "DevOps Management", "Enhancement", "Testing", "Meetings"],
     },
   };
   // Auto-generated-style rules: each carries the parent name "geniisys" plus
-  // the tokenized work-type name.
+  // the tokenized work-type name. NOTE the Meetings rule is stored under a
+  // DIFFERENT category (General Work) — the real-world case that used to be
+  // scoped out and always come back blank under #Geniisys.
   const geniisysRules: InferenceRule[] = [
     { keywords: ["debugging", "debug", "geniisys"], category: "Projects", subCategory: "Geniisys", workType: "Debugging" },
     { keywords: ["devops management", "devops", "management", "geniisys"], category: "Projects", subCategory: "Geniisys", workType: "DevOps Management" },
     { keywords: ["enhancement", "enhance", "geniisys"], category: "Projects", subCategory: "Geniisys", workType: "Enhancement" },
+    { keywords: ["meeting", "standup", "sync"], category: "General Work", workType: "Meetings" },
   ];
   const opts = {
     defaultTeam: "IT/Platforms",
@@ -945,6 +949,15 @@ describe("Live regression — tagged sub-category work-type selection", () => {
   it("stemmed variant 'debugging the module' still lands on Debugging", () => {
     const r = parseWorkAllocation("- #Geniisys debugging the login module - 50%", opts);
     expect(r[0].workType).toBe("Debugging");
+  });
+
+  it("cross-category work type: '#Geniisys team meeting' → Meetings (rule stored under General Work)", () => {
+    // Meetings is valid under Geniisys but its rule's category is General Work.
+    // Scoping candidates by work-type validity (not stored category) is what
+    // lets this resolve instead of coming back blank.
+    const r = parseWorkAllocation("- #Geniisys team meeting sync @CIC - 100%", opts);
+    expect(r[0].subCategory).toBe("Geniisys");
+    expect(r[0].workType).toBe("Meetings");
   });
 
   it("Scenario-A client rules don't force a work type: bare @client → BLANK", () => {

@@ -494,33 +494,6 @@ export function matchClient(
 }
 
 /**
- * When a #Category tag is explicitly present, narrow the inference rule set
- * to only rules belonging to that category (and, when a sub-category is
- * resolved, rules scoped to that sub-category or the main-category level).
- *
- * This prevents cross-category keyword pollution: "development" logged under
- * "#Cloud Infra" no longer accidentally matches a "Projects/Development" rule.
- *
- * Falls back to the full rule set when no scoped rules exist (e.g. the
- * category is brand-new and has no auto-generated rules yet).
- */
-function scopeRulesToCategory(
-  rules: readonly InferenceRule[],
-  category: string,
-  subCategory: string | null,
-): readonly InferenceRule[] {
-  const catLower = category.toLowerCase();
-  const subLower = subCategory?.toLowerCase() ?? null;
-  const scoped = rules.filter((r) => {
-    if (r.category.toLowerCase() !== catLower) return false;
-    if (subLower === null) return true;
-    // Include sub-category-specific rules AND main-category-level rules (subCategory = null/undefined)
-    return !r.subCategory || r.subCategory.toLowerCase() === subLower;
-  });
-  return scoped.length > 0 ? scoped : rules;
-}
-
-/**
  * Pick the work type for a tag-resolved activity purely from keyword evidence
  * in the description. The contract (per product decision):
  *
@@ -555,6 +528,7 @@ function scopeRulesToCategory(
 function refineWorkTypeForParent(
   text: string,
   parent: string,
+  category: string,
   ignoreNames: readonly (string | null)[],
   inferenceRules: readonly InferenceRule[],
   taxonomy: TaxonomySnapshot | undefined,
@@ -567,7 +541,7 @@ function refineWorkTypeForParent(
   );
 
   // The set of work types selectable under this parent (lowercased), or null
-  // when the taxonomy doesn't scope this parent — then we trust the raw match.
+  // when the taxonomy doesn't scope this parent.
   const validList = taxonomy
     ? taxonomy.workTypesByParent[parent] ??
       taxonomy.workTypesByParent[
@@ -581,12 +555,24 @@ function refineWorkTypeForParent(
       ? new Set(validList.map((w) => w.toLowerCase()))
       : null;
 
-  // Highest-scoring rule whose work type is valid under the parent wins;
-  // ties break to the earliest rule (stable — declaration order).
+  // Candidate rules are scoped by WORK-TYPE VALIDITY under the parent, NOT by
+  // the rule's stored category. This is the key fix: a work type like
+  // "Meetings" is valid under "Geniisys" but its keyword rule is stored under
+  // category "General Work"; scoping by category dropped it, so "#Geniisys
+  // meetings" always came back blank. Scoping by validSet keeps any rule whose
+  // work type the dropdown can actually show, regardless of where the rule
+  // lives. When the taxonomy can't scope this parent (validSet null), fall
+  // back to same-category rules to avoid cross-category keyword pollution.
+  const candidates = inferenceRules.filter((r) =>
+    validSet
+      ? validSet.has(r.workType.toLowerCase())
+      : r.category.toLowerCase() === category.toLowerCase(),
+  );
+
+  // Highest-scoring candidate wins; ties break to the earliest rule (stable).
   let best: InferenceRule | null = null;
   let bestScore = 0;
-  for (const rule of inferenceRules) {
-    if (validSet && !validSet.has(rule.workType.toLowerCase())) continue;
+  for (const rule of candidates) {
     let score = 0;
     for (const kw of rule.keywords) {
       if (ignore.has(kw.toLowerCase().trim())) continue;
@@ -832,8 +818,9 @@ export function parseWorkAllocation(
           workType = refineWorkTypeForParent(
             `${headerText} ${bulletLines.join(" ")}`,
             subCategory ?? workCategory,
+            resolved.category,
             [resolved.category, resolved.subCategory, ...knownClients],
-            scopeRulesToCategory(inferenceRules, resolved.category, resolved.subCategory),
+            inferenceRules,
             taxonomy,
           );
         } else {
@@ -966,8 +953,9 @@ export function parseWorkAllocation(
         workType = refineWorkTypeForParent(
           description,
           subCategory ?? workCategory,
+          resolved.category,
           [resolved.category, resolved.subCategory, ...knownClients],
-          scopeRulesToCategory(inferenceRules, resolved.category, resolved.subCategory),
+          inferenceRules,
           taxonomy,
         );
       } else {
