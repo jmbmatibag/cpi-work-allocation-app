@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { ImportEmployeesDialog } from "@/components/ImportEmployeesDialog";
+import { BulkActionBar } from "@/components/BulkActionBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -55,7 +56,6 @@ import {
   Upload,
   Download,
   CheckCircle2,
-  X,
   FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -165,6 +165,10 @@ const EmployeeManagement = () => {
   const [selectionResetKey, setSelectionResetKey] = useState(0);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkActionPending, setBulkActionPending] = useState(false);
+  // Bulk "change manager" modal. `bulkManagerTarget` holds the chosen
+  // manager id, or "__none__" for top-of-chain.
+  const [bulkManagerOpen, setBulkManagerOpen] = useState(false);
+  const [bulkManagerTarget, setBulkManagerTarget] = useState<string>("__none__");
 
   // --- CSV import (full flow lives inside ImportEmployeesDialog) ---
   const [importOpen, setImportOpen] = useState(false);
@@ -430,6 +434,64 @@ const EmployeeManagement = () => {
     }
   };
 
+  // Bulk manager reassignment. No dedicated bulk endpoint exists, so we
+  // fan out per-employee updates (the selection is small — a handful of
+  // rows at demo scale). Skips no-ops and reports failures in aggregate.
+  const handleBulkChangeManager = async () => {
+    setBulkManagerOpen(false);
+    setBulkActionPending(true);
+    const newManagerId =
+      bulkManagerTarget === "__none__" ? null : bulkManagerTarget;
+    // Can't make a manager report to themselves.
+    const targets = selectedEmployees.filter((e) => e.id !== newManagerId);
+    let updated = 0;
+    let failed = 0;
+    for (const emp of targets) {
+      const res = await updateEmployee(emp.id, { managerId: newManagerId });
+      if (res.ok) updated++;
+      else failed++;
+    }
+    setBulkActionPending(false);
+    setSelectedEmployees([]);
+    setSelectionResetKey((k) => k + 1);
+    if (updated > 0) {
+      const mgr = newManagerId
+        ? employees.find((e) => e.id === newManagerId)
+        : null;
+      toast.success(
+        mgr
+          ? `${updated} employee${updated === 1 ? "" : "s"} now report to ${mgr.firstName} ${mgr.lastName}.`
+          : `${updated} employee${updated === 1 ? "" : "s"} moved to top of chain.`,
+      );
+    }
+    if (failed > 0)
+      toast.warning(`${failed} could not be reassigned.`);
+  };
+
+  // Bulk toggle of the scheduled-reminders exemption. `exempt` true pauses
+  // reminders; false re-enables them.
+  const handleBulkToggleReminders = async (exempt: boolean) => {
+    setBulkActionPending(true);
+    const targets = [...selectedEmployees];
+    let updated = 0;
+    let failed = 0;
+    for (const emp of targets) {
+      const res = await updateEmployee(emp.id, {
+        emailNotificationsExempt: exempt,
+      });
+      if (res.ok) updated++;
+      else failed++;
+    }
+    setBulkActionPending(false);
+    if (updated > 0)
+      toast.success(
+        exempt
+          ? `Scheduled reminders paused for ${updated} employee${updated === 1 ? "" : "s"}.`
+          : `Scheduled reminders enabled for ${updated} employee${updated === 1 ? "" : "s"}.`,
+      );
+    if (failed > 0) toast.warning(`${failed} could not be updated.`);
+  };
+
   // Multi-role: each KPI counts users whose role set INCLUDES that
   // role, so a [Admin, Manager, Employee] user is counted in all
   // three. The sum of these counts therefore exceeds `total` — that's
@@ -691,54 +753,12 @@ const EmployeeManagement = () => {
       {viewMode === "list" && (
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <CardTitle className="text-base">
-                Directory
-                <span className="ml-2 text-sm font-normal text-muted-foreground">
-                  ({filtered.length} {filtered.length === 1 ? "result" : "results"})
-                </span>
-              </CardTitle>
-              {selectedEmployees.length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-primary">
-                    {selectedEmployees.length}{" "}
-                    {selectedEmployees.length === 1 ? "employee" : "employees"} selected
-                  </span>
-                  {isApiMode && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleBulkResend}
-                      disabled={bulkActionPending}
-                      className="gap-1.5"
-                    >
-                      <Mail className="h-3.5 w-3.5" />
-                      Resend Welcome Email
-                    </Button>
-                  )}
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => setBulkDeleteOpen(true)}
-                    disabled={bulkActionPending}
-                    className="gap-1.5"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    Delete Selected
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleClearSelection}
-                    disabled={bulkActionPending}
-                    className="gap-1 text-muted-foreground"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                    Clear
-                  </Button>
-                </div>
-              )}
-            </div>
+            <CardTitle className="text-base">
+              Directory
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                ({filtered.length} {filtered.length === 1 ? "result" : "results"})
+              </span>
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <DataTable
@@ -1024,6 +1044,66 @@ const EmployeeManagement = () => {
         onClose={() => setImportOpen(false)}
         onComplete={() => qc.invalidateQueries({ queryKey: ["employees"] })}
       />
+
+      {/* Floating bulk action bar — shows when rows are selected (list view) */}
+      <BulkActionBar
+        count={selectedEmployees.length}
+        isApiMode={isApiMode}
+        pending={bulkActionPending}
+        onChangeManager={() => {
+          setBulkManagerTarget("__none__");
+          setBulkManagerOpen(true);
+        }}
+        onSetReminders={handleBulkToggleReminders}
+        onResend={handleBulkResend}
+        onDelete={() => setBulkDeleteOpen(true)}
+        onClear={handleClearSelection}
+      />
+
+      {/* Bulk change-manager modal */}
+      <Dialog
+        open={bulkManagerOpen}
+        onOpenChange={(o) => !o && setBulkManagerOpen(false)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Change manager for {selectedEmployees.length}{" "}
+              {selectedEmployees.length === 1 ? "employee" : "employees"}
+            </DialogTitle>
+            <DialogDescription>
+              Reassign the selected employees to a new manager, or move them to
+              the top of the chain.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Label htmlFor="bulk-mg">Manager</Label>
+            <Select value={bulkManagerTarget} onValueChange={setBulkManagerTarget}>
+              <SelectTrigger id="bulk-mg">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">
+                  No manager (top of chain)
+                </SelectItem>
+                {allManagers.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.firstName} {m.lastName} ({m.team})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkManagerOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleBulkChangeManager} disabled={bulkActionPending}>
+              Apply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Bulk delete confirm dialog */}
       <Dialog open={bulkDeleteOpen} onOpenChange={(o) => !o && setBulkDeleteOpen(false)}>
