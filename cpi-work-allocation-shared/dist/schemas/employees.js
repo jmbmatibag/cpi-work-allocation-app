@@ -37,6 +37,9 @@ export const CreateEmployeeSchema = z.object({
     team: z.string().min(1),
     managerId: z.string().nullable().optional(),
     jobTitle: z.string().min(1),
+    // Opt an employee out of automated scheduled reminder emails. Optional
+    // on create; the DB column defaults to false (i.e. reminders on).
+    emailNotificationsExempt: z.boolean().optional(),
 });
 export const UpdateEmployeeSchema = z.object({
     firstName: z.string().min(1).max(100).optional(),
@@ -50,6 +53,10 @@ export const UpdateEmployeeSchema = z.object({
     team: z.string().min(1).optional(),
     managerId: z.string().nullable().optional(),
     jobTitle: z.string().min(1).optional(),
+    // Toggled from the Employee Management "Receive Scheduled Reminders"
+    // switch. true = exempt (no scheduled reminder emails). Flows straight
+    // into prisma.user.update via the spread in the update controller.
+    emailNotificationsExempt: z.boolean().optional(),
 });
 /**
  * Highest-to-lowest privilege ordering. Used purely to derive a single

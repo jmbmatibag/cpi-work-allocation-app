@@ -158,6 +158,9 @@ async function sendEmployeeReminders(period: Period): Promise<FanOutResult> {
   const pending = await prisma.user.findMany({
     where: {
       roles: { has: 'Employee' },
+      // Respect the per-employee opt-out. Admins can exempt individuals
+      // from automated reminders in the Employee Management view.
+      emailNotificationsExempt: false,
       NOT: {
         allocations: {
           some: {
@@ -229,6 +232,10 @@ async function bucketPendingByManager(period: Period): Promise<ManagerBucket[]> 
       month: period.month,
       year: period.year,
       managerId: { not: null },
+      // Skip records whose manager has opted out of scheduled reminders.
+      // Filters on the joined manager relation so an exempt manager gets
+      // no pending-review email even while their reports' records stand.
+      manager: { is: { emailNotificationsExempt: false } },
     },
     select: {
       managerId: true,

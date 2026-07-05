@@ -54,6 +54,13 @@ export interface Employee {
   managerId: string | null;
   managerName: string;
   jobTitle: string;
+  /**
+   * When true, this employee is excluded from automated scheduled
+   * reminder emails (submission reminders / pending-review reminders).
+   * Optional so pre-existing seed records and older stored payloads
+   * (which predate the flag) are treated as false = reminders on.
+   */
+  emailNotificationsExempt?: boolean;
 }
 
 /**

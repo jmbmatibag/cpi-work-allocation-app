@@ -43,6 +43,8 @@ export interface ApiUser {
   team: string;
   managerId: string | null;
   jobTitle: string;
+  // When true, the user is excluded from automated scheduled reminder emails.
+  emailNotificationsExempt: boolean;
 }
 
 export interface ApiActivityFlag {
@@ -353,6 +355,7 @@ const employees = {
     team: string;
     managerId?: string | null;
     jobTitle: string;
+    emailNotificationsExempt?: boolean;
   }) => post<ApiUser>('/api/employees', body),
 
   update: (id: string, patch: {
@@ -364,6 +367,7 @@ const employees = {
     team?: string;
     managerId?: string | null;
     jobTitle?: string;
+    emailNotificationsExempt?: boolean;
   }) => put<ApiUser>(`/api/employees/${encodeURIComponent(id)}`, patch),
 
   remove: (id: string) =>

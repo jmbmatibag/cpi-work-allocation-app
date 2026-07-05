@@ -148,6 +148,9 @@ export function toFrontendUser(user: any) {
     team: user.team,
     managerId: user.managerId,
     jobTitle: user.jobTitle,
+    // Default to false for rows read before the column existed / where the
+    // relation was selected without it.
+    emailNotificationsExempt: user.emailNotificationsExempt ?? false,
   };
 }
 

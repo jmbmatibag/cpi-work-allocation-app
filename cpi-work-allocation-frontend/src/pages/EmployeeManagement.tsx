@@ -10,6 +10,7 @@ import { useClientsConfig } from "@/contexts/ClientsConfigContext";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/apiClient";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { ImportEmployeesDialog } from "@/components/ImportEmployeesDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -91,6 +92,7 @@ interface FormState {
   team: string;
   jobTitle: string;
   managerId: string | null;
+  emailNotificationsExempt: boolean;
 }
 
 const emptyForm: FormState = {
@@ -103,6 +105,7 @@ const emptyForm: FormState = {
   team: "",
   jobTitle: "",
   managerId: null,
+  emailNotificationsExempt: false,
 };
 
 const toEmployeeInput = (f: FormState): EmployeeInput => ({
@@ -114,6 +117,7 @@ const toEmployeeInput = (f: FormState): EmployeeInput => ({
   team:      f.team,
   jobTitle:  f.jobTitle.trim(),
   managerId: f.managerId,
+  emailNotificationsExempt: f.emailNotificationsExempt,
 });
 
 function validate(form: FormState, _isEdit: boolean): string | null {
@@ -286,6 +290,7 @@ const EmployeeManagement = () => {
       team: emp.team,
       jobTitle: emp.jobTitle,
       managerId: emp.managerId,
+      emailNotificationsExempt: emp.emailNotificationsExempt ?? false,
     });
     setModalOpen(true);
   };
@@ -974,6 +979,29 @@ const EmployeeManagement = () => {
                   top-of-chain.
                 </p>
               )}
+            </div>
+            <div className="col-span-2 flex items-start justify-between gap-4 rounded-md border border-input px-3 py-2.5">
+              <div className="space-y-0.5">
+                <Label htmlFor="scheduled-reminders">
+                  Receive Scheduled Reminders
+                </Label>
+                <p className="text-[11px] text-muted-foreground">
+                  If disabled, this employee will not receive automated
+                  scheduled reminder emails.
+                </p>
+              </div>
+              {/* Switch reads "receiving" (the positive framing); the stored
+                  flag is the inverse (exempt). checked = !exempt. */}
+              <Switch
+                id="scheduled-reminders"
+                checked={!form.emailNotificationsExempt}
+                onCheckedChange={(next) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    emailNotificationsExempt: !next,
+                  }))
+                }
+              />
             </div>
           </div>
 

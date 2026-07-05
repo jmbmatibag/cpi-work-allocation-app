@@ -123,6 +123,7 @@ export async function create(req: AuthRequest, res: Response): Promise<void> {
         team: fields.team,
         managerId: fields.managerId ?? null,
         jobTitle: fields.jobTitle,
+        emailNotificationsExempt: fields.emailNotificationsExempt ?? false,
       },
     });
     await logAuditTx(tx, {

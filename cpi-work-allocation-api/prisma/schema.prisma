@@ -97,6 +97,14 @@ model User {
   managerId    String?
   jobTitle     String
 
+  // When true, this user is excluded from the automated scheduled
+  // reminder emails (submission reminders for employees, pending-review
+  // reminders for managers). Default false = everyone receives reminders
+  // unless an admin explicitly opts them out from the Employee Management
+  // view. Gate lives in src/lib/reminderScheduler.ts; in-app bell
+  // notifications are unaffected.
+  emailNotificationsExempt Boolean @default(false)
+
   manager    User?  @relation("Reports", fields: [managerId], references: [id])
   reports    User[] @relation("Reports")
 

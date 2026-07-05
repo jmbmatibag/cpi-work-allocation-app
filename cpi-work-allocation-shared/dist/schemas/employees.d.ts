@@ -36,6 +36,7 @@ export declare const CreateEmployeeSchema: z.ZodObject<{
     team: z.ZodString;
     managerId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     jobTitle: z.ZodString;
+    emailNotificationsExempt: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$strip>;
 export declare const UpdateEmployeeSchema: z.ZodObject<{
     firstName: z.ZodOptional<z.ZodString>;
@@ -51,6 +52,7 @@ export declare const UpdateEmployeeSchema: z.ZodObject<{
     team: z.ZodOptional<z.ZodString>;
     managerId: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     jobTitle: z.ZodOptional<z.ZodString>;
+    emailNotificationsExempt: z.ZodOptional<z.ZodBoolean>;
 }, z.core.$strip>;
 export type UserRole = z.infer<typeof UserRoleSchema>;
 export type UserRoles = z.infer<typeof UserRolesSchema>;
