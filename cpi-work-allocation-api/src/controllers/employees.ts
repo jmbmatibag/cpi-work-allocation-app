@@ -248,12 +248,34 @@ export async function update(req: AuthRequest, res: Response): Promise<void> {
 
   const user = await prisma.$transaction(async (tx) => {
     const updated = await tx.user.update({ where: { id }, data });
+
+    // Cascade a manager change to ALL of the employee's allocation records.
+    // AllocationRecord.managerId is a snapshot stamped at draft-save/submit
+    // that is meant to track the live org chart (see the submit handler, which
+    // refreshes it "so Team Hub routing always reflects the current org
+    // chart"). Reassigning the manager here would otherwise leave existing
+    // records pointing at the OLD (or null) manager, dropping the employee into
+    // the "Unassigned" bucket on Master Overview / Team Hub even though
+    // Employee Management shows them correctly. Enforcing the invariant across
+    // every record — regardless of status — keeps all periods consistent.
+    let cascadedAllocationRecords = 0;
+    if (updated.managerId !== target.managerId) {
+      const { count } = await tx.allocationRecord.updateMany({
+        where: { employeeId: id },
+        data: { managerId: updated.managerId },
+      });
+      cascadedAllocationRecords = count;
+    }
+
     await logAuditTx(tx, {
       userId: req.userId!,
       action: 'update',
       entity: 'User',
       entityId: updated.id,
-      payload: { changes },
+      payload: {
+        changes,
+        ...(cascadedAllocationRecords > 0 && { cascadedAllocationRecords }),
+      },
     });
     return updated;
   });
