@@ -47,6 +47,8 @@ import {
   Trash2,
   AlertCircle,
   Mail,
+  Bell,
+  BellOff,
   Users,
   ArrowRightLeft,
   Crown,
@@ -1228,8 +1230,34 @@ const RowActions = ({
   onChangeManager,
 }: RowActionsProps) => {
   const { isApiMode } = useAuth();
+  const { updateEmployee } = useEmployees();
   const [popOpen, setPopOpen] = useState(false);
   const [resendPending, setResendPending] = useState(false);
+  const [reminderPending, setReminderPending] = useState(false);
+
+  const remindersOn = !emp.emailNotificationsExempt;
+
+  // Quick toggle mirroring the "Receive Scheduled Reminders" switch in the
+  // edit modal, for one-click access straight from the row.
+  const handleToggleReminders = async () => {
+    setReminderPending(true);
+    try {
+      const result = await updateEmployee(emp.id, {
+        emailNotificationsExempt: remindersOn,
+      });
+      if (result.ok) {
+        toast.success(
+          remindersOn
+            ? `Scheduled reminders paused for ${emp.firstName}.`
+            : `Scheduled reminders resumed for ${emp.firstName}.`,
+        );
+      } else {
+        toast.error(result.message);
+      }
+    } finally {
+      setReminderPending(false);
+    }
+  };
 
   const handleResend = async () => {
     setResendPending(true);
@@ -1336,6 +1364,27 @@ const RowActions = ({
         title={isMe ? "Cannot resend to yourself" : !isApiMode ? "Not available in local mode" : "Resend welcome email"}
       >
         <Mail className="h-3.5 w-3.5" />
+      </button>
+      <button
+        onClick={handleToggleReminders}
+        disabled={reminderPending}
+        className={
+          remindersOn
+            ? "p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+            : "p-1.5 rounded-md hover:bg-warning/10 text-warning disabled:opacity-30 disabled:cursor-not-allowed"
+        }
+        aria-label={`${remindersOn ? "Disable" : "Enable"} scheduled reminders for ${emp.firstName} ${emp.lastName}`}
+        title={
+          remindersOn
+            ? "Scheduled reminders on — click to exempt"
+            : "Exempt from scheduled reminders — click to re-enable"
+        }
+      >
+        {remindersOn ? (
+          <Bell className="h-3.5 w-3.5" />
+        ) : (
+          <BellOff className="h-3.5 w-3.5" />
+        )}
       </button>
       <button
         onClick={() => onEdit(emp)}
