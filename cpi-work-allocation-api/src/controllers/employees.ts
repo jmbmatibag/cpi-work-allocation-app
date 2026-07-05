@@ -4,7 +4,13 @@ import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { logAuditTx } from '../lib/audit.js';
-import { sendWelcomeEmail, PASSWORD_SETUP_TTL_MS } from '../lib/mailer.js';
+import {
+  sendWelcomeEmail,
+  PASSWORD_SETUP_TTL_MS,
+  EMAIL_BATCH_SIZE,
+  EMAIL_BATCH_DELAY_MS,
+} from '../lib/mailer.js';
+import { processInBatches } from '../lib/batch.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { getValid } from '../middleware/validate.js';
 import {
@@ -390,8 +396,14 @@ export async function bulkResendWelcome(req: AuthRequest, res: Response): Promis
   }
   const { ids } = parse.data;
 
-  const sent: string[] = [];
   const skipped: { id: string; reason: string }[] = [];
+  // Eligible recipients whose setup token we (re)issue synchronously below.
+  // We collect them first, then hand the actual SMTP sends to a throttled
+  // batch processor. The previous implementation fired every
+  // `sendWelcomeEmail` at once (fire-and-forget inside the loop), which
+  // opened dozens of simultaneous SMTP connections and tripped Office 365's
+  // "432 4.3.2 Concurrent connections limit exceeded".
+  const outbox: { id: string; email: string; name: string; setupToken: string }[] = [];
 
   for (const id of ids) {
     const user = await prisma.user.findUnique({ where: { id } });
@@ -417,19 +429,34 @@ export async function bulkResendWelcome(req: AuthRequest, res: Response): Promis
       data: { passwordSetupToken: setupToken, passwordSetupExpiresAt: setupExpiresAt },
     });
 
-    void sendWelcomeEmail(
-      user.email,
-      `${user.firstName} ${user.lastName}`.trim() || user.email,
+    outbox.push({
+      id,
+      email: user.email,
+      name: `${user.firstName} ${user.lastName}`.trim() || user.email,
       setupToken,
-    ).catch((err) => {
-      console.error(
-        `[employees.bulkResendWelcome] Email to ${user.email} failed:`,
-        (err as Error).message,
-      );
     });
-
-    sent.push(id);
   }
 
-  res.json({ sent, skipped });
+  // Send in throttled chunks AFTER responding. Tokens are already persisted,
+  // so a late-arriving email is still valid and an admin can always
+  // re-trigger. A full batched send of a 100-id blast (chunks of 3 with a
+  // ~1.5s gap) can take ~50s — far too long to hold the HTTP request open —
+  // so we fire-and-forget the batch, matching the endpoint's original
+  // "queued" semantics while capping concurrency.
+  void processInBatches(
+    outbox,
+    (r) => sendWelcomeEmail(r.email, r.name, r.setupToken),
+    { batchSize: EMAIL_BATCH_SIZE, delayMs: EMAIL_BATCH_DELAY_MS },
+  ).then((results) => {
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        console.error(
+          `[employees.bulkResendWelcome] Email to ${r.item.email} failed:`,
+          (r.reason as Error)?.message ?? r.reason,
+        );
+      }
+    }
+  });
+
+  res.json({ sent: outbox.map((r) => r.id), skipped });
 }

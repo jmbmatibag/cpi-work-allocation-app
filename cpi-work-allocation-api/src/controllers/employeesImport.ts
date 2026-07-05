@@ -3,7 +3,13 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { logAuditTx } from '../lib/audit.js';
-import { sendWelcomeEmail, PASSWORD_SETUP_TTL_MS } from '../lib/mailer.js';
+import {
+  sendWelcomeEmail,
+  PASSWORD_SETUP_TTL_MS,
+  EMAIL_BATCH_SIZE,
+  EMAIL_BATCH_DELAY_MS,
+} from '../lib/mailer.js';
+import { processInBatches } from '../lib/batch.js';
 import type { AuthRequest } from '../middleware/auth.js';
 import { primaryRole, type UserRole } from 'cpi-work-allocation-shared';
 import {
@@ -305,8 +311,26 @@ export async function executeImport(req: AuthRequest, res: Response): Promise<vo
         total: created.length,
         message: `Sending ${created.length} welcome email${created.length === 1 ? '' : 's'}…`,
       });
-      const results = await Promise.allSettled(
-        created.map((c) => sendWelcomeEmail(c.email, c.name, c.setupToken)),
+      // Throttled fan-out: blasting all sends at once via Promise.allSettled
+      // opened one SMTP connection per employee and tripped Office 365's
+      // "432 4.3.2 Concurrent connections limit exceeded". Sending in small
+      // chunks with a gap between them stays under the ceiling; one bounce
+      // still never aborts the run. Progress ticks per chunk.
+      const results = await processInBatches(
+        created,
+        (c) => sendWelcomeEmail(c.email, c.name, c.setupToken),
+        {
+          batchSize: EMAIL_BATCH_SIZE,
+          delayMs: EMAIL_BATCH_DELAY_MS,
+          onChunk: (processed, total) => {
+            send('progress', {
+              phase: 'email',
+              processed,
+              total,
+              message: `Sent ${processed} of ${total} welcome email${total === 1 ? '' : 's'}…`,
+            });
+          },
+        },
       );
       emailsSent = results.filter((r) => r.status === 'fulfilled').length;
       const bounced = results.length - emailsSent;

@@ -306,7 +306,7 @@ export async function submit(req: AuthRequest, res: Response): Promise<void> {
     sendNotificationEmail(
       recipient,
       `[CPI Allocation] ${employeeName} submitted ${updated.month} ${updated.year}`,
-      buildSubmissionEmailHtml(employeeName, updated.month, updated.year, updated.id),
+      buildSubmissionEmailHtml(employeeName, updated.month, updated.year),
       buildSubmissionEmailText(employeeName, updated.month, updated.year),
     )
       .then(() => {
@@ -528,7 +528,7 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
     sendNotificationEmail(
       updated.employee.email,
       `[CPI Allocation] Your ${updated.month} ${updated.year} allocation has been approved`,
-      buildApprovalEmailHtml(employeeName, updated.month, updated.year, updated.id),
+      buildApprovalEmailHtml(employeeName, updated.month, updated.year),
       buildApprovalEmailText(employeeName, updated.month, updated.year),
     ).catch((err) => {
       console.warn(
@@ -619,7 +619,7 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
     sendNotificationEmail(
       updated.employee.email,
       `[CPI Allocation] Your ${updated.month} ${updated.year} allocation needs revision`,
-      buildRevisionEmailHtml(employeeName, updated.month, updated.year, updated.id, body.feedback),
+      buildRevisionEmailHtml(employeeName, updated.month, updated.year, body.feedback),
       buildRevisionEmailText(employeeName, updated.month, updated.year, body.feedback),
     ).catch((err) => {
       console.warn(

@@ -31,6 +31,23 @@ const FROM = process.env.SMTP_FROM ?? '"CPI Work Allocation" <no-reply@cpi.com.p
 const isReal = Boolean(process.env.SMTP_HOST);
 
 // ---------------------------------------------------------------------------
+// SMTP throttling (bulk sends)
+// ---------------------------------------------------------------------------
+
+/**
+ * Max concurrent SMTP sends per chunk. Office 365 / Outlook rejects a flood
+ * of simultaneous connections with `432 4.3.2 Concurrent connections limit
+ * exceeded` (the ceiling is ~3 concurrent connections per authenticated
+ * mailbox), so keep this small. Any bulk sender MUST route through
+ * `processInBatches` with these limits rather than blasting the whole list.
+ * Override via env for tenants with a different threshold.
+ */
+export const EMAIL_BATCH_SIZE = Number(process.env.EMAIL_BATCH_SIZE) || 3;
+
+/** Pause between chunks (ms) to stay under the per-minute connection rate. */
+export const EMAIL_BATCH_DELAY_MS = Number(process.env.EMAIL_BATCH_DELAY_MS) || 1500;
+
+// ---------------------------------------------------------------------------
 // Startup connectivity check (non-fatal — caller decides what to do)
 // ---------------------------------------------------------------------------
 
@@ -104,17 +121,39 @@ export function resolveNotificationRecipient(
 
 const APP_URL = process.env.APP_URL ?? 'http://localhost:5173';
 
+/**
+ * Deep link to an employee's own Monthly Allocations workspace for a given
+ * period.
+ *
+ * The frontend has NO `/allocations/:id` route — the Monthly Allocations
+ * page lives at `/allocations` and selects the record by (current user +
+ * month + year), deep-linking via `?month=&year=` query params (see
+ * MonthlyAllocations.tsx). Emailing `/allocations/<ALC-id>` therefore fell
+ * through to the SPA's 404 route. This builds the URL the router actually
+ * understands.
+ *
+ * Note this is only correct for emails sent TO the owning employee
+ * (approval / revision notices) — the record is resolved from the logged-in
+ * user, so a manager clicking it would land on their OWN allocation. Manager
+ * review happens on `/team-hub` instead.
+ */
+function allocationDeepLink(month: string, year: string): string {
+  const params = new URLSearchParams({ month, year });
+  return `${APP_URL}/allocations?${params.toString()}`;
+}
+
 export function buildSubmissionEmailHtml(
   employeeName: string,
   month: string,
   year: string,
-  allocationId: string,
 ): string {
   return notificationHtml(
     'New Allocation Submitted for Review',
     `<strong>${employeeName}</strong> has submitted their work allocation for <strong>${month} ${year}</strong> and is awaiting your review.`,
     'warning',
-    `${APP_URL}/allocations/${allocationId}`,
+    // Managers review team submissions on the Team Hub, not their own
+    // allocations page.
+    `${APP_URL}/team-hub`,
     'Review Allocation →',
   );
 }
@@ -124,20 +163,19 @@ export function buildSubmissionEmailText(
   month: string,
   year: string,
 ): string {
-  return `${employeeName} has submitted their ${month} ${year} work allocation for review.\n\nLog in to CPI Work Allocation to review it: ${APP_URL}`;
+  return `${employeeName} has submitted their ${month} ${year} work allocation for review.\n\nLog in to CPI Work Allocation to review it: ${APP_URL}/team-hub`;
 }
 
 export function buildApprovalEmailHtml(
   employeeName: string,
   month: string,
   year: string,
-  allocationId: string,
 ): string {
   return notificationHtml(
     'Your Allocation Has Been Approved',
     `Your work allocation for <strong>${month} ${year}</strong> has been reviewed and approved. No further action is required.`,
     'success',
-    `${APP_URL}/allocations/${allocationId}`,
+    allocationDeepLink(month, year),
     'View Allocation →',
   );
 }
@@ -147,14 +185,13 @@ export function buildApprovalEmailText(
   month: string,
   year: string,
 ): string {
-  return `Hi ${employeeName},\n\nYour work allocation for ${month} ${year} has been approved.\n\nView it at: ${APP_URL}`;
+  return `Hi ${employeeName},\n\nYour work allocation for ${month} ${year} has been approved.\n\nView it at: ${allocationDeepLink(month, year)}`;
 }
 
 export function buildRevisionEmailHtml(
   employeeName: string,
   month: string,
   year: string,
-  allocationId: string,
   feedback?: string | null,
 ): string {
   const feedbackBlock = feedback
@@ -164,7 +201,7 @@ export function buildRevisionEmailHtml(
     'Your Allocation Needs Revision',
     `Your work allocation for <strong>${month} ${year}</strong> has been returned for revision. Please review the feedback below and resubmit when ready.${feedbackBlock}`,
     'error',
-    `${APP_URL}/allocations/${allocationId}`,
+    allocationDeepLink(month, year),
     'Update Allocation →',
   );
 }
@@ -176,7 +213,7 @@ export function buildRevisionEmailText(
   feedback?: string | null,
 ): string {
   const feedbackLine = feedback ? `\n\nReviewer note: ${feedback}` : '';
-  return `Hi ${employeeName},\n\nYour work allocation for ${month} ${year} has been returned for revision.${feedbackLine}\n\nUpdate it at: ${APP_URL}`;
+  return `Hi ${employeeName},\n\nYour work allocation for ${month} ${year} has been returned for revision.${feedbackLine}\n\nUpdate it at: ${allocationDeepLink(month, year)}`;
 }
 
 export function buildSubmissionReminderEmailHtml(
