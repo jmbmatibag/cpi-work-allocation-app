@@ -43,6 +43,22 @@ describe("buildHighlightRegex — multi-word tags with punctuation", () => {
     ]);
   });
 
+  // Hyphen-joined variants are the form normalizeDescription's Pass 1 used to
+  // rewrite to spaces. We now recognise them via the regex separator instead,
+  // so a live editing backdrop highlights them WITHOUT mutating the characters
+  // (which would drift the transparent-textarea caret in a proportional font).
+  it("tolerates hyphen-joined multi-word names (#Quick-Policy)", () => {
+    expect(matchedTags("- Enhancement #Quick-Policy - 30%", NAMES)).toEqual([
+      "#Quick-Policy",
+    ]);
+  });
+
+  it("tolerates hyphen-joined punctuated names (#Sales-Marketing-BD)", () => {
+    expect(matchedTags("#Sales-Marketing-BD proposal", NAMES)).toEqual([
+      "#Sales-Marketing-BD",
+    ]);
+  });
+
   it("highlights @client tags alongside #category tags", () => {
     expect(matchedTags("@AUII #Sales, Marketing & BD", NAMES)).toEqual([
       "@AUII",

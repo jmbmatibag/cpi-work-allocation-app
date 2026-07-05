@@ -190,10 +190,23 @@ interface WorkspaceProps {
 
 interface DescriptionFieldProps {
   value: string;
+  /**
+   * Fired on every keystroke with the RAW textarea value. This must
+   * store the string verbatim — no trimming or whitespace collapsing —
+   * or trailing spaces get eaten and the caret jumps to the end on the
+   * next render (React rewrites `.value` when it differs from the DOM).
+   */
   onChange: (val: string) => void;
+  /**
+   * Fired on blur with the raw value. This is where lossy normalization
+   * (trailing-space trim, whitespace collapse, tag cleanup) belongs —
+   * once the user has stopped editing, so it never fights the caret
+   * mid-typing. Optional; when omitted the value is left as typed.
+   */
+  onCommit?: (val: string) => void;
 }
 
-const DescriptionField = ({ value, onChange }: DescriptionFieldProps) => {
+const DescriptionField = ({ value, onChange, onCommit }: DescriptionFieldProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   const { categories: mainCategories, subCategories } = useClientsConfig();
@@ -233,6 +246,7 @@ const DescriptionField = ({ value, onChange }: DescriptionFieldProps) => {
         placeholder="Enter description..."
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={(e) => onCommit?.(e.target.value)}
         onScroll={syncScroll}
         className="relative min-h-[60px] resize-y text-sm border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
         style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
@@ -1192,8 +1206,16 @@ const Workspace = ({
                                       Description
                                     </label>
                                     <DescriptionField
-                                      value={normalizeDescription(activity.description, activity.client)}
+                                      value={activity.description}
                                       onChange={(val) => updateActivity(sIdx, aIdx, "description", val)}
+                                      onCommit={(val) =>
+                                        updateActivity(
+                                          sIdx,
+                                          aIdx,
+                                          "description",
+                                          normalizeDescription(val, activity.client),
+                                        )
+                                      }
                                     />
                                   </div>
                                 </div>
