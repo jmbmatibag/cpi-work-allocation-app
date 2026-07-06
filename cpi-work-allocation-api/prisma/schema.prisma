@@ -110,11 +110,21 @@ model User {
 
   allocations        AllocationRecord[] @relation("EmployeeRecords")
   managedAllocations AllocationRecord[] @relation("ManagerRecords")
+  // Peer Coverage: allocation records this user was the one to actually
+  // approve / return (accountability). Distinct from managedAllocations —
+  // the covering peer may differ from the record's assigned manager.
+  actionedAllocations AllocationRecord[] @relation("ActionedRecords")
   journalEntries     JournalEntry[]
   auditLogs          AuditLog[]
   otpCodes           OtpCode[]
   refreshTokens      RefreshToken[]
   notifications      Notification[]
+
+  // Peer Coverage tabs. `peerCoverageTabs` are the tabs THIS manager has
+  // pinned (the peers they cover); `coveredByTabs` are tabs where this
+  // manager is the peer someone else pinned. Both cascade on user delete.
+  peerCoverageTabs PeerCoverageTab[] @relation("TabOwner")
+  coveredByTabs    PeerCoverageTab[] @relation("TabPeer")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -148,8 +158,19 @@ model AllocationRecord {
   lastEditedByUserName String?
   lastEditedAt         DateTime?
 
+  // Peer Coverage accountability. Stamped whenever this record is approved
+  // or returned-for-revision with the id of the user who ACTUALLY clicked
+  // the action — which, under peer coverage, may be a covering peer rather
+  // than the record's assigned `managerId`. `actionedByName` is denormalised
+  // for display (same rationale as lastEditedByUserName); the FK is kept for
+  // referential integrity and SetNull-on-delete so history survives.
+  actionedById   String?
+  actionedByName String?
+  actionedAt     DateTime?
+
   employee   User  @relation("EmployeeRecords", fields: [employeeId], references: [id])
   manager    User? @relation("ManagerRecords", fields: [managerId], references: [id])
+  actionedBy User? @relation("ActionedRecords", fields: [actionedById], references: [id], onDelete: SetNull)
 
   activities AllocationActivity[]
 
@@ -158,6 +179,7 @@ model AllocationRecord {
 
   @@unique([employeeId, month, year])
   @@index([managerId])
+  @@index([actionedById])
   @@index([status])
   @@index([year, monthIndex])
   // Composite: employee/manager scoped list() queries ordered by period.
@@ -196,6 +218,28 @@ model AllocationActivity {
 
   // Prisma does NOT auto-create indexes on FKs in Postgres.
   @@index([recordId])
+}
+
+// Peer Coverage tabs. Persists the peer-manager tabs a manager has pinned
+// onto their Team Hub "Team Submissions" view so they survive across
+// sessions/devices. A row means: `managerId` (the owner) is covering the
+// team of `peerManagerId` (the peer). Business rule — both must belong to
+// the same Team; enforced at the controller on insert, not in the schema
+// (Team is a free-string on User, and the pair is validated live so a later
+// team move doesn't strand a dangling row: stale-team tabs are filtered out
+// on read).
+model PeerCoverageTab {
+  id            String   @id @default(uuid())
+  managerId     String
+  peerManagerId String
+  createdAt     DateTime @default(now())
+
+  manager User @relation("TabOwner", fields: [managerId], references: [id], onDelete: Cascade)
+  peer    User @relation("TabPeer", fields: [peerManagerId], references: [id], onDelete: Cascade)
+
+  // One tab per (owner, peer) pair — adding an existing peer is idempotent.
+  @@unique([managerId, peerManagerId])
+  @@index([managerId])
 }
 
 model JournalEntry {

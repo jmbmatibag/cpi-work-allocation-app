@@ -33,6 +33,8 @@ import {
 import {
   buildAllocationScopeFilter,
   canActOnEmployee,
+  canManageAllocation,
+  arePeerManagers,
   hasGlobalScope,
   hasManagerScope,
 } from '../lib/scope.js';
@@ -147,10 +149,28 @@ export async function list(req: AuthRequest, res: Response): Promise<void> {
   }
   if (scope.filter) Object.assign(where, scope.filter);
 
-  // managerId filter is a power-user feature — only honored for callers
-  // with global scope. A scoped (Manager-only) caller can't filter by
-  // another manager's id anyway: their scope is already their own reports.
-  if (managerId && hasGlobalScope(req.userRoles)) where.managerId = managerId;
+  // managerId filter. Two ways it's honored:
+  //   - Global-scope callers (Admin/Finance) can filter by ANY manager.
+  //   - Peer Coverage: a Manager can filter by a SAME-TEAM peer manager
+  //     (or themselves) to load that peer's Team Submissions. In that case
+  //     we swap the self/reports employee scope for a manager-pointer scope
+  //     — the covering manager is authorized to see exactly the records the
+  //     peer owns for review. Any other managerId from a scoped caller is a
+  //     403 (explicitly asking for out-of-scope data).
+  if (managerId) {
+    if (hasGlobalScope(req.userRoles)) {
+      where.managerId = managerId;
+    } else if (
+      hasManagerScope(req.userRoles) &&
+      (managerId === req.userId || (await arePeerManagers(req.userId, managerId)))
+    ) {
+      delete where.employeeId;
+      where.managerId = managerId;
+    } else {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+  }
   if (month) where.month = month;
   if (year) where.year = year;
   if (status) where.status = status;
@@ -338,26 +358,6 @@ export async function submit(req: AuthRequest, res: Response): Promise<void> {
 }
 
 /**
- * Permission for manager-side actions (approve / return / edit / flag).
- *
- * Global-scope users (Admin/Head/Finance) can always act. Otherwise the
- * caller must have the Manager role AND be the record's assigned
- * manager. A multi-role [Manager, Employee] user editing one of their
- * reports' records hits the Manager branch (they ARE the assigned
- * manager); editing their OWN record bypasses this — managers approve
- * other people's work, not their own.
- */
-function canManageRecord(
-  userRoles: readonly string[] | undefined,
-  userId: string | undefined,
-  recordManagerId: string | null,
-): boolean {
-  if (hasGlobalScope(userRoles)) return true;
-  if (hasManagerScope(userRoles) && recordManagerId === userId) return true;
-  return false;
-}
-
-/**
  * Epic 3 — Automated Finance completion hook.
  *
  * Called fire-and-forget right after a manager approves an allocation.
@@ -486,7 +486,7 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
     return;
   }
 
-  if (!canManageRecord(req.userRoles, req.userId, record.managerId)) {
+  if (!(await canManageAllocation(req.userId, req.userRoles, record.managerId))) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -495,10 +495,26 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
   // can tell a genuine →Approved transition from a redundant re-approval.
   const priorStatus = record.status;
 
+  // Peer Coverage accountability — stamp the user who ACTUALLY approved.
+  // Resolved from the session (never the body) so a covering peer is
+  // recorded as the actor rather than the record's assigned manager.
+  const actor = await prisma.user.findUniqueOrThrow({
+    where: { id: req.userId! },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const actorName = `${actor.firstName} ${actor.lastName}`;
+
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.allocationRecord.update({
       where: { id: record.id },
-      data: { status: 'Approved', reviewedAt: new Date(), feedback: null },
+      data: {
+        status: 'Approved',
+        reviewedAt: new Date(),
+        feedback: null,
+        actionedById: actor.id,
+        actionedByName: actorName,
+        actionedAt: new Date(),
+      },
       include: INCLUDE_FULL,
     });
     await logAuditTx(tx, {
@@ -506,7 +522,7 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
       action: 'approve',
       entity: 'AllocationRecord',
       entityId: record.id,
-      payload: { fromStatus: record.status, toStatus: 'Approved' },
+      payload: { fromStatus: record.status, toStatus: 'Approved', actionedById: actor.id },
     });
     return u;
   });
@@ -571,10 +587,17 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
     return;
   }
 
-  if (!canManageRecord(req.userRoles, req.userId, record.managerId)) {
+  if (!(await canManageAllocation(req.userId, req.userRoles, record.managerId))) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
+
+  // Peer Coverage accountability — stamp the user who ACTUALLY returned it.
+  const actor = await prisma.user.findUniqueOrThrow({
+    where: { id: req.userId! },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const actorName = `${actor.firstName} ${actor.lastName}`;
 
   const updated = await prisma.$transaction(async (tx) => {
     const u = await tx.allocationRecord.update({
@@ -583,6 +606,9 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
         status: 'NeedsRevision',
         reviewedAt: new Date(),
         feedback: body.feedback ?? null,
+        actionedById: actor.id,
+        actionedByName: actorName,
+        actionedAt: new Date(),
       },
       include: INCLUDE_FULL,
     });
@@ -595,6 +621,7 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
         fromStatus: record.status,
         toStatus: 'NeedsRevision',
         feedback: body.feedback ?? null,
+        actionedById: actor.id,
       },
     });
     return u;
@@ -640,7 +667,7 @@ export async function managerEdit(req: AuthRequest, res: Response): Promise<void
     return;
   }
 
-  if (!canManageRecord(req.userRoles, req.userId, record.managerId)) {
+  if (!(await canManageAllocation(req.userId, req.userRoles, record.managerId))) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -690,7 +717,7 @@ export async function flagActivity(req: AuthRequest, res: Response): Promise<voi
     res.status(404).json({ error: 'Allocation not found' });
     return;
   }
-  if (!canManageRecord(req.userRoles, req.userId, record.managerId)) {
+  if (!(await canManageAllocation(req.userId, req.userRoles, record.managerId))) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }
@@ -732,7 +759,7 @@ export async function unflagActivity(req: AuthRequest, res: Response): Promise<v
     res.status(404).json({ error: 'Allocation not found' });
     return;
   }
-  if (!canManageRecord(req.userRoles, req.userId, record.managerId)) {
+  if (!(await canManageAllocation(req.userId, req.userRoles, record.managerId))) {
     res.status(403).json({ error: 'Forbidden' });
     return;
   }

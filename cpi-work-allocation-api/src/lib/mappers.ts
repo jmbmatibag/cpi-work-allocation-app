@@ -39,6 +39,9 @@ type RecordStub = {
   lastEditedByUserId: string | null;
   lastEditedByUserName: string | null;
   lastEditedAt: Date | null;
+  actionedById: string | null;
+  actionedByName: string | null;
+  actionedAt: Date | null;
   activities: ActivityStub[];
   employee: UserStub;
   manager: UserStub | null;
@@ -130,6 +133,16 @@ export function toFrontendRecord(record: any) {
         userId: record.lastEditedByUserId,
         userName: record.lastEditedByUserName as string,
         at: (record.lastEditedAt as Date).toISOString(),
+      },
+    }),
+    // Peer Coverage accountability — who actually approved/returned. The
+    // action verb ("Approved by" vs "Returned by") is derived from `status`
+    // on the client, so only identity + timestamp are emitted here.
+    ...(record.actionedById && record.actionedAt && {
+      actionedBy: {
+        userId: record.actionedById,
+        userName: (record.actionedByName as string) ?? '',
+        at: (record.actionedAt as Date).toISOString(),
       },
     }),
   };

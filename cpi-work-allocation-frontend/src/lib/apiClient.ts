@@ -88,6 +88,18 @@ export interface ApiAllocationRecord {
   feedback?: string;
   flags?: Record<string, ApiActivityFlag>;
   lastEditedBy?: { userId: string; userName: string; at: string };
+  // Peer Coverage accountability — who actually approved/returned this
+  // record. The verb ("Approved by" / "Returned by") is derived from status.
+  actionedBy?: { userId: string; userName: string; at: string };
+}
+
+// A peer manager — element of the eligible-peers list and the pinned tabs.
+export interface ApiPeerManager {
+  id: string;
+  firstName: string;
+  lastName: string;
+  team: string;
+  jobTitle: string;
 }
 
 export interface ApiJournalEntry {
@@ -398,6 +410,29 @@ const employees = {
 };
 
 // ---------------------------------------------------------------------------
+// Managers — Peer Coverage
+// ---------------------------------------------------------------------------
+
+const managers = {
+  // Eligible peer managers (same team, Manager role, excluding self).
+  peers: (signal?: AbortSignal) =>
+    get<ApiPeerManager[]>('/api/managers/peers', signal),
+
+  // The caller's persisted peer-coverage tabs (self-healing: server prunes
+  // any peer that's no longer a valid same-team manager).
+  peerTabs: (signal?: AbortSignal) =>
+    get<ApiPeerManager[]>('/api/managers/peer-tabs', signal),
+
+  // Pin a peer tab. Returns the peer DTO. Idempotent server-side.
+  addPeerTab: (peerManagerId: string) =>
+    post<ApiPeerManager>('/api/managers/peer-tabs', { peerManagerId }),
+
+  // Unpin a peer tab. 204 whether or not it existed.
+  removePeerTab: (peerManagerId: string) =>
+    del<void>(`/api/managers/peer-tabs/${encodeURIComponent(peerManagerId)}`),
+};
+
+// ---------------------------------------------------------------------------
 // Allocations
 // ---------------------------------------------------------------------------
 
@@ -625,4 +660,4 @@ const migrate = {
 // Exported namespace
 // ---------------------------------------------------------------------------
 
-export const api = { auth, employees, allocations, journal, settings, notifications, migrate };
+export const api = { auth, employees, managers, allocations, journal, settings, notifications, migrate };

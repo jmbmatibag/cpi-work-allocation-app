@@ -14,6 +14,7 @@ export * from './schemas/common.js';
 export * from './schemas/auth.js';
 export * from './schemas/allocations.js';
 export * from './schemas/employees.js';
+export * from './schemas/managers.js';
 export * from './schemas/journal.js';
 export * from './schemas/settings.js';
 //# sourceMappingURL=index.d.ts.map

@@ -9,6 +9,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import authRouter from './routes/auth.js';
 import settingsRouter from './routes/settings.js';
 import employeesRouter from './routes/employees.js';
+import managersRouter from './routes/managers.js';
 import allocationsRouter from './routes/allocations.js';
 import journalRouter from './routes/journal.js';
 import notificationsRouter from './routes/notifications.js';
@@ -77,6 +78,7 @@ export function createApp() {
   app.use('/api/auth', authRouter);
   app.use('/api/settings', settingsRouter);
   app.use('/api/employees', employeesRouter);
+  app.use('/api/managers', managersRouter);
   app.use('/api/allocations', allocationsRouter);
   app.use('/api/journal', journalRouter);
   app.use('/api/notifications', notificationsRouter);

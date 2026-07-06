@@ -7,6 +7,13 @@ import {
   useAllocations,
   AllocationStatus,
 } from "@/contexts/AllocationsContext";
+import type { AllocationRecord } from "@/contexts/AllocationsContext";
+import {
+  usePeerManagers,
+  usePeerCoverageTabs,
+  usePeerSubmissions,
+  type PeerManager,
+} from "@/hooks/usePeerCoverage";
 import { useNotifications } from "@/contexts/NotificationsContext";
 import { useClientsConfig } from "@/contexts/ClientsConfigContext";
 import { useJournal } from "@/contexts/JournalContext";
@@ -58,12 +65,27 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@/components/ui/tabs";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+} from "@/components/ui/command";
+import {
   CheckCircle2,
   Clock,
   AlertTriangle,
   ChevronRight,
   Flag,
   X,
+  Plus,
   Pencil,
   Trash2,
   History,
@@ -72,9 +94,8 @@ import {
   ArrowDown,
   ArrowUpDown,
   CalendarDays,
-  AtSign,
-  Hash,
   Users,
+  UserCheck,
   FileEdit,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -117,8 +138,8 @@ const MONTH_INDEX: Record<string, number> = {
   September: 8, October: 9, November: 10, December: 11,
 };
 
-const periodKey = (r: { month: string; year: number }): number =>
-  r.year * 12 + (MONTH_INDEX[r.month] ?? 0);
+const periodKey = (r: { month: string; year: string | number }): number =>
+  Number(r.year) * 12 + (MONTH_INDEX[r.month] ?? 0);
 
 const sumStreamTotals = (streams: WorkStreamData[]): number =>
   streams.reduce(
@@ -129,31 +150,16 @@ const sumStreamTotals = (streams: WorkStreamData[]): number =>
 
 const TeamHub = () => {
   const { currentUser } = useAuth();
-  const {
-    getRecordsForManager,
-    approve,
-    returnForRevision,
-    flagActivity,
-    unflagActivity,
-    managerEdit,
-  } = useAllocations();
-  const { addNotification } = useNotifications();
+  // Only the manager's OWN reports feed the KPIs, analytics and calendar at
+  // the top of the page. The per-tab review workflow (search, table, detail
+  // modal, approve/return/edit) lives entirely inside <SubmissionsPanel>, so
+  // this component no longer needs the allocation mutations directly.
+  const { getRecordsForManager } = useAllocations();
   // Hoisted above the filter useMemos so yearOptions can derive years
   // from both allocation records and journal entries.
   const { entries: journalEntries } = useJournal();
   const { employees, getReports } = useEmployees();
   const { categories } = useClientsConfig();
-
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [returnConfirmOpen, setReturnConfirmOpen] = useState(false);
-  const [summaryFeedback, setSummaryFeedback] = useState("");
-
-  // Local edit buffer — when the manager is editing, streams are held
-  // here and flushed to the context on Save / Approve / Return.
-  const [editedStreams, setEditedStreams] = useState<WorkStreamData[] | null>(
-    null,
-  );
-  const isEditing = editedStreams !== null;
 
   const records = useMemo(() => {
     if (!currentUser) return [];
@@ -254,143 +260,13 @@ const TeamHub = () => {
 
   const isFiltering = filterMonth !== ALL_MONTHS || !!dateRange?.from;
 
-  // --- Submissions data-grid state ------------------------------------
-  //
-  // Search is a single text box that matches against employee name,
-  // month, year, and status — covers every column the user can see at
-  // a glance.
-  //
-  // Sort defaults to most-recent-submission first (`submitted` desc),
-  // which is what a manager triaging the queue almost always wants.
-  //
-  // Pagination is a hard 10/page. Page resets to 1 whenever the
-  // result-set definition changes (search or sort), AND we clamp the
-  // displayed page when the underlying records shrink (e.g. after
-  // approving or returning the last record on the current page).
-  const [searchTerm, setSearchTerm] = useState("");
-  const [sortKey, setSortKey] = useState<SortKey>("submitted");
-  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [currentPage, setCurrentPage] = useState(1);
-
-  const sortedRecords = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
-    const filtered = q
-      ? filteredRecords.filter(
-          (r) =>
-            r.employeeName.toLowerCase().includes(q) ||
-            r.month.toLowerCase().includes(q) ||
-            String(r.year).includes(q) ||
-            r.status.toLowerCase().includes(q),
-        )
-      : filteredRecords;
-
-    return [...filtered].sort((a, b) => {
-      let cmp = 0;
-      switch (sortKey) {
-        case "employee":
-          cmp = a.employeeName.localeCompare(b.employeeName);
-          break;
-        case "period":
-          cmp = periodKey(a) - periodKey(b);
-          break;
-        case "status":
-          cmp = a.status.localeCompare(b.status);
-          break;
-        case "submitted": {
-          // Nulls always last regardless of direction — early return
-          // bypasses the asc/desc flip below.
-          const av = a.submittedAt ? new Date(a.submittedAt).getTime() : null;
-          const bv = b.submittedAt ? new Date(b.submittedAt).getTime() : null;
-          if (av === null && bv === null) return 0;
-          if (av === null) return 1;
-          if (bv === null) return -1;
-          cmp = av - bv;
-          break;
-        }
-        case "streams":
-          cmp = a.streams.length - b.streams.length;
-          break;
-      }
-      return sortDirection === "asc" ? cmp : -cmp;
-    });
-  }, [filteredRecords, searchTerm, sortKey, sortDirection]);
-
-  // Reset to page 1 when the result definition changes.
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, sortKey, sortDirection, filterYear, filterMonth, dateRange]);
-
-  const totalPages = Math.max(
-    1,
-    Math.ceil(sortedRecords.length / SUBMISSIONS_PAGE_SIZE),
-  );
-  const safePage = Math.min(Math.max(1, currentPage), totalPages);
-  const pagedRecords = useMemo(
-    () =>
-      sortedRecords.slice(
-        (safePage - 1) * SUBMISSIONS_PAGE_SIZE,
-        safePage * SUBMISSIONS_PAGE_SIZE,
-      ),
-    [sortedRecords, safePage],
-  );
-
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      // Submitted defaults to desc (newest first), everything else asc.
-      setSortDirection(key === "submitted" ? "desc" : "asc");
-    }
-  };
-
-  // --- Defense-in-depth isolation audit -------------------------------
-  // Dev-only last-line audit. Keys off managerId only — a manager may
-  // legitimately have reports across multiple teams, so a team mismatch
-  // is not a leak.
-  if (process.env.NODE_ENV !== "production" && currentUser) {
-    for (const r of records) {
-      if (r.managerId !== currentUser.id) {
-        // eslint-disable-next-line no-console
-        console.error(
-          "[TeamHub] Data isolation violation: record",
-          r.id,
-          `(managerId="${r.managerId}")`,
-          "reached manager",
-          `"${currentUser.id}"`,
-        );
-      }
-    }
-  }
-
-  const selected = useMemo(
-    () => records.find((r) => r.id === selectedId),
-    [records, selectedId],
-  );
-
-  // Reset local edit state whenever the selected record changes
-  // (opening, closing, or jumping between records).
-  useEffect(() => {
-    setEditedStreams(null);
-  }, [selectedId]);
-
-  // The streams the modal displays — edited buffer if present,
-  // otherwise the record's own streams.
-  const displayStreams = editedStreams ?? selected?.streams ?? [];
-  const displayTotal = sumStreamTotals(displayStreams);
-
-  const flagEntries = useMemo(
-    () => (selected?.flags ? Object.entries(selected.flags) : []),
-    [selected],
-  );
-  const flagCount = flagEntries.length;
-
+  // KPI counts reflect the manager's own team for the selected period. The
+  // Team Submissions section below is tabbed (own reports + peer coverage)
+  // and manages its own filtering/search/pagination per tab.
   const draftCount = filteredRecords.filter((r) => r.status === "Draft").length;
   const pendingCount = filteredRecords.filter((r) => r.status === "Pending Review").length;
   const approvedCount = filteredRecords.filter((r) => r.status === "Approved").length;
   const revisionCount = filteredRecords.filter((r) => r.status === "Needs Revision").length;
-
-  const canReview = selected?.status === "Pending Review";
 
   // ── Team Activity Calendar ────────────────────────────────────────────
   // Hooks for journal/employees/clients live at the top of the
@@ -427,124 +303,6 @@ const TeamHub = () => {
     }
     return result;
   }, [teamJournalEntries, selectedCalDate]);
-
-  const handleStartEdit = () => {
-    if (!selected) return;
-    // Deep clone the streams so edits don't mutate the context's
-    // state object before we commit.
-    setEditedStreams(
-      selected.streams.map((s) => ({
-        ...s,
-        activities: s.activities.map((a) => ({ ...a })),
-      })),
-    );
-  };
-
-  const handleCancelEdit = () => {
-    setEditedStreams(null);
-    toast.info("Edits discarded.");
-  };
-
-  const handleSaveEdit = () => {
-    if (!selected || !editedStreams || !currentUser) return;
-    if (Math.abs(displayTotal - 100) > 0.01) {
-      toast.error(
-        `Total allocation must equal 100% (currently ${displayTotal.toFixed(2)}%).`,
-      );
-      return;
-    }
-    managerEdit(selected.id, editedStreams, {
-      userId: currentUser.id,
-      userName: `${currentUser.firstName} ${currentUser.lastName}`,
-    });
-    setEditedStreams(null);
-    toast.success("Edits saved", {
-      description: `${selected.employeeName}'s allocation updated. Flags cleared.`,
-    });
-  };
-
-  const handleApprove = () => {
-    if (!selected || !currentUser) return;
-
-    // If manager has unsaved edits, save them first as part of the
-    // approve. One commit, transparent audit.
-    if (isEditing && editedStreams) {
-      if (Math.abs(displayTotal - 100) > 0.01) {
-        toast.error(
-          `Total must equal 100% before approving (currently ${displayTotal.toFixed(2)}%).`,
-        );
-        return;
-      }
-      managerEdit(selected.id, editedStreams, {
-        userId: currentUser.id,
-        userName: `${currentUser.firstName} ${currentUser.lastName}`,
-      });
-    } else if (flagCount > 0) {
-      // Not editing and flags remain — block approval.
-      toast.error("Clear all flags before approving.", {
-        description: `${flagCount} ${flagCount === 1 ? "card is" : "cards are"} still flagged.`,
-      });
-      return;
-    }
-
-    approve(selected.id);
-    toast.success("Allocation approved", {
-      description: `${selected.employeeName} — ${selected.month} ${selected.year}`,
-    });
-    addNotification({
-      targetUserId: selected.employeeId,
-      title: "Allocation Approved",
-      message: `Your work allocation for ${selected.month} ${selected.year} has been approved.`,
-      type: "success",
-      actionUrl: "/allocations",
-    });
-    setSelectedId(null);
-  };
-
-  const openReturnConfirm = () => {
-    // If editing, save edits first — the employee sees the edited
-    // version when revising. Skip the flag-required check in that
-    // case because manager's edits serve as the feedback.
-    if (isEditing && editedStreams) {
-      if (!selected || !currentUser) return;
-      if (Math.abs(displayTotal - 100) > 0.01) {
-        toast.error(
-          `Total must equal 100% before returning (currently ${displayTotal.toFixed(2)}%).`,
-        );
-        return;
-      }
-      managerEdit(selected.id, editedStreams, {
-        userId: currentUser.id,
-        userName: `${currentUser.firstName} ${currentUser.lastName}`,
-      });
-      setEditedStreams(null);
-    } else if (flagCount === 0) {
-      toast.error("Flag at least one card before returning for revision.");
-      return;
-    }
-    setReturnConfirmOpen(true);
-  };
-
-  const handleReturn = () => {
-    if (!selected) return;
-    const reason = summaryFeedback.trim();
-    returnForRevision(selected.id, reason || undefined);
-    toast.success("Returned for revision", {
-      description: `${selected.employeeName} will see your changes and can revise.`,
-    });
-    addNotification({
-      targetUserId: selected.employeeId,
-      title: "Revision Requested",
-      message:
-        `Your work allocation for ${selected.month} ${selected.year} requires changes.` +
-        (reason ? ` Reason: ${reason}` : ""),
-      type: "warning",
-      actionUrl: "/allocations",
-    });
-    setReturnConfirmOpen(false);
-    setSelectedId(null);
-    setSummaryFeedback("");
-  };
 
   return (
     <div className="p-4 sm:p-6 space-y-6 overflow-y-auto h-full min-h-0">
@@ -990,407 +748,14 @@ const TeamHub = () => {
 
       </div>{/* end chart + calendar grid */}
 
-      {/* Submissions table */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <CardTitle className="text-base">
-              Team Submissions
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                ({sortedRecords.length}
-                {searchTerm.trim() && filteredRecords.length !== sortedRecords.length
-                  ? ` of ${filteredRecords.length}`
-                  : ""})
-              </span>
-            </CardTitle>
-            <div className="relative w-full sm:w-72">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search name, period, status…"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 h-9"
-              />
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {records.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">
-              No submissions from your team yet.
-            </p>
-          ) : filteredRecords.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">
-              No submissions in the selected time period.
-            </p>
-          ) : sortedRecords.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-8 text-center">
-              No submissions match your search.
-            </p>
-          ) : (
-            <>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>
-                      <SortableHeader
-                        label="Employee"
-                        columnKey="employee"
-                        currentKey={sortKey}
-                        direction={sortDirection}
-                        onSort={handleSort}
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <SortableHeader
-                        label="Period"
-                        columnKey="period"
-                        currentKey={sortKey}
-                        direction={sortDirection}
-                        onSort={handleSort}
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <SortableHeader
-                        label="Status"
-                        columnKey="status"
-                        currentKey={sortKey}
-                        direction={sortDirection}
-                        onSort={handleSort}
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <SortableHeader
-                        label="Submitted"
-                        columnKey="submitted"
-                        currentKey={sortKey}
-                        direction={sortDirection}
-                        onSort={handleSort}
-                      />
-                    </TableHead>
-                    <TableHead>
-                      <SortableHeader
-                        label="Streams"
-                        columnKey="streams"
-                        currentKey={sortKey}
-                        direction={sortDirection}
-                        onSort={handleSort}
-                      />
-                    </TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pagedRecords.map((r) => (
-                    <TableRow
-                      key={r.id}
-                      className="cursor-pointer hover:bg-muted/50"
-                      onClick={() => setSelectedId(r.id)}
-                    >
-                      <TableCell className="font-medium">{r.employeeName}</TableCell>
-                      <TableCell>
-                        {r.month} {r.year}
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={statusColor[r.status]}>{r.status}</Badge>
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {r.submittedAt
-                          ? new Date(r.submittedAt).toLocaleDateString()
-                          : "—"}
-                      </TableCell>
-                      <TableCell className="text-sm">{r.streams.length}</TableCell>
-                      <TableCell>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              <TablePagination
-                page={currentPage}
-                pageSize={SUBMISSIONS_PAGE_SIZE}
-                totalItems={sortedRecords.length}
-                onPageChange={setCurrentPage}
-              />
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Detail modal */}
-      <Dialog
-        open={!!selectedId}
-        onOpenChange={(o) => !o && setSelectedId(null)}
-      >
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
-          {selected && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center justify-between gap-3">
-                  <div>
-                    <p>{selected.employeeName}</p>
-                    <p className="text-sm font-normal text-muted-foreground">
-                      {selected.month} {selected.year} · {selected.team}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 flex-wrap justify-end">
-                    {flagCount > 0 && !isEditing && (
-                      <Badge
-                        variant="outline"
-                        className="text-warning border-warning/40 bg-warning/10"
-                      >
-                        <Flag className="h-3 w-3 mr-1" />
-                        {flagCount} flagged
-                      </Badge>
-                    )}
-                    {isEditing && (
-                      <Badge className="bg-primary/10 text-primary border-primary/30">
-                        <Pencil className="h-3 w-3 mr-1" />
-                        Editing
-                      </Badge>
-                    )}
-                    <Badge className={statusColor[selected.status]}>
-                      {selected.status}
-                    </Badge>
-                  </div>
-                </DialogTitle>
-              </DialogHeader>
-
-              {/* Audit stamp — who last edited and when. Shown to
-                  make manager-side changes visible to the team. */}
-              {selected.lastEditedBy && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 border rounded-md px-3 py-2">
-                  <History className="h-3 w-3 shrink-0" />
-                  <span>
-                    Last edited by{" "}
-                    <span className="font-medium text-foreground">
-                      {selected.lastEditedBy.userName}
-                    </span>{" "}
-                    on{" "}
-                    {new Date(selected.lastEditedBy.at).toLocaleString(undefined, {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
-                  </span>
-                </div>
-              )}
-
-              <div className="space-y-4 py-2">
-                {isEditing && editedStreams ? (
-                  <ReviewEditor
-                    streams={editedStreams}
-                    onStreamsChange={setEditedStreams}
-                  />
-                ) : (
-                  displayStreams.map((stream, si) => {
-                    const subtotal = stream.activities.reduce(
-                      (a, b) => a + b.percentage,
-                      0,
-                    );
-                    return (
-                      <div key={si} className="border rounded-lg overflow-hidden">
-                        <div className="px-4 py-2 bg-muted/40 flex items-center justify-between border-l-4 border-l-primary">
-                          <span className="font-semibold text-sm">
-                            {stream.category}
-                          </span>
-                          <span className="text-sm text-primary font-semibold">
-                            {subtotal.toFixed(2)}%
-                          </span>
-                        </div>
-                        <div className="divide-y">
-                          {stream.activities.map((a) => {
-                            const flag = selected.flags?.[a.id];
-                            return (
-                              <div
-                                key={a.id}
-                                className={`p-3 text-sm ${flag ? "bg-warning/10" : ""}`}
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      <span className="font-medium">
-                                        {a.workType}{" "}
-                                        <span className="text-muted-foreground font-normal">
-                                          · {a.client}
-                                        </span>
-                                      </span>
-                                      {a.subCategory && (
-                                        <span
-                                          className="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wider"
-                                          style={{
-                                            background: "hsl(var(--primary-pastel))",
-                                            color: "hsl(var(--primary))",
-                                            letterSpacing: "0.03em",
-                                          }}
-                                          title={`Sub category: ${a.subCategory}`}
-                                        >
-                                          {a.subCategory}
-                                        </span>
-                                      )}
-                                    </div>
-                                    {a.description && (
-                                      <p className="text-xs text-muted-foreground mt-1 whitespace-pre-line">
-                                        {a.description}
-                                      </p>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <span className="text-primary font-semibold">
-                                      {a.percentage}%
-                                    </span>
-                                    {canReview && (
-                                      <FlagControl
-                                        isFlagged={!!flag}
-                                        existingReason={flag?.reason}
-                                        onFlag={(reason) =>
-                                          flagActivity(selected.id, a.id, reason)
-                                        }
-                                        onClear={() =>
-                                          unflagActivity(selected.id, a.id)
-                                        }
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-                                {flag && (
-                                  <div className="mt-2 rounded-md bg-destructive/8 border border-destructive/20 p-2 text-xs text-foreground">
-                                    <span className="font-medium">Flagged:</span>{" "}
-                                    {flag.reason}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-
-                {isEditing && (
-                  <div className="flex items-center justify-end gap-2 text-sm border-t pt-3">
-                    <span className="text-muted-foreground">Grand Total:</span>
-                    <span
-                      className={`font-bold text-lg tabular-nums ${
-                        Math.abs(displayTotal - 100) < 0.01
-                          ? "text-success"
-                          : "text-destructive"
-                      }`}
-                    >
-                      {displayTotal.toFixed(2)}%
-                    </span>
-                  </div>
-                )}
-
-                {selected.feedback && (
-                  <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3">
-                    <p className="text-xs font-medium text-destructive">
-                      Previous summary feedback:
-                    </p>
-                    <p className="text-sm text-foreground mt-1">
-                      {selected.feedback}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <DialogFooter className="gap-2">
-                {canReview ? (
-                  isEditing ? (
-                    <>
-                      <Button variant="outline" onClick={handleCancelEdit}>
-                        Cancel Edits
-                      </Button>
-                      <Button variant="secondary" onClick={handleSaveEdit}>
-                        Save Edits
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={openReturnConfirm}
-                      >
-                        Save &amp; Return for Revision
-                      </Button>
-                      <Button
-                        onClick={handleApprove}
-                      >
-                        Save &amp; Approve
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button
-                        variant="outline"
-                        onClick={handleStartEdit}
-                        className="gap-1"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={openReturnConfirm}
-                        disabled={flagCount === 0}
-                      >
-                        Return for Revision
-                        {flagCount > 0 ? ` (${flagCount})` : ""}
-                      </Button>
-                      <Button
-                        onClick={handleApprove}
-                        disabled={flagCount > 0}
-                      >
-                        Approve
-                      </Button>
-                    </>
-                  )
-                ) : (
-                  <Button
-                    variant="outline"
-                    onClick={() => setSelectedId(null)}
-                  >
-                    Close
-                  </Button>
-                )}
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Confirm return-for-revision (summary comment optional) */}
-      <Dialog open={returnConfirmOpen} onOpenChange={setReturnConfirmOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Return for Revision</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {selected?.employeeName} will see the current state of their
-            allocation{" "}
-            {flagCount > 0 && !isEditing
-              ? `with ${flagCount} flagged ${flagCount === 1 ? "card" : "cards"} and `
-              : ""}
-            the optional summary comment below.
-          </p>
-          <Textarea
-            value={summaryFeedback}
-            onChange={(e) => setSummaryFeedback(e.target.value)}
-            placeholder="Optional summary — overall pattern, what to prioritize, etc."
-            className="min-h-[100px]"
-          />
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setReturnConfirmOpen(false);
-                setSummaryFeedback("");
-              }}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleReturn}>Send to Employee</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Team Submissions — tabbed: own direct reports + peer coverage.
+          The whole section is a dynamic <Tabs> whose triggers are driven by
+          the manager's persisted peer tabs; the "+" opens a peer picker. */}
+      <TeamSubmissionsTabs
+        filterYear={filterYear}
+        filterMonth={filterMonth}
+        dateRange={dateRange}
+      />
     </div>
   );
 };
@@ -1893,7 +1258,12 @@ const FlagControl = ({
           type="button"
           size="sm"
           variant="ghost"
-          className="h-7 text-xs gap-1 text-muted-foreground hover:text-destructive"
+          // The theme sets --accent === --destructive (same red), so the
+          // ghost variant's default hover:bg-accent would put red text on a
+          // red background — the "Flag" label vanished on hover. Pin an
+          // explicit light-red hover background (the app's standard
+          // destructive-hover pattern) so the red label stays legible.
+          className="h-7 text-xs gap-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
         >
           <Flag className="h-3 w-3" /> Flag
         </Button>
@@ -1927,6 +1297,943 @@ const FlagControl = ({
         </div>
       </PopoverContent>
     </Popover>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// filterRecordsByPeriod — shared period filter for every submissions tab.
+//
+// Mirrors the old inline TeamHub `filteredRecords` logic so each tab (own
+// reports or a peer's) honors the same global Year/Month or custom date-range
+// picker that drives the KPIs above.
+// ---------------------------------------------------------------------------
+
+function filterRecordsByPeriod(
+  records: AllocationRecord[],
+  filterYear: string,
+  filterMonth: string,
+  dateRange: DateRange | undefined,
+): AllocationRecord[] {
+  if (dateRange?.from) {
+    return records.filter((r) => {
+      const y = Number(r.year);
+      const mIdx = MONTH_INDEX[r.month] ?? 0;
+      const periodStart = new Date(y, mIdx, 1);
+      const periodEnd = new Date(y, mIdx + 1, 0);
+      if (dateRange.from && periodEnd < dateRange.from) return false;
+      if (dateRange.to && periodStart > dateRange.to) return false;
+      return true;
+    });
+  }
+  return records.filter((r) => {
+    if (r.year !== filterYear) return false;
+    if (filterMonth !== ALL_MONTHS && r.month !== filterMonth) return false;
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// ActionedByIndicator — Epic 3 accountability chip.
+//
+// Shows who ACTUALLY approved / returned a record. The verb is derived from
+// status: Approved → "Approved by", Needs Revision → "Returned by". Renders
+// nothing for records that haven't been actioned (Draft / Pending Review) or
+// that pre-date the accountability column (no actionedBy).
+// ---------------------------------------------------------------------------
+
+const ActionedByIndicator = ({
+  record,
+  variant,
+}: {
+  record: AllocationRecord;
+  variant: "inline" | "banner";
+}) => {
+  const actor = record.actionedBy;
+  if (!actor) return null;
+  if (record.status !== "Approved" && record.status !== "Needs Revision")
+    return null;
+
+  const approved = record.status === "Approved";
+  const verb = approved ? "Approved by" : "Returned by";
+  const Icon = approved ? CheckCircle2 : AlertTriangle;
+  const tone = approved ? "text-success" : "text-destructive";
+
+  if (variant === "inline") {
+    return (
+      <span
+        className={cn("inline-flex items-center gap-1 text-[11px]", tone)}
+        title={`${verb} ${actor.userName} on ${new Date(actor.at).toLocaleString()}`}
+      >
+        <Icon className="h-3 w-3 shrink-0" />
+        <span className="text-muted-foreground">
+          {verb}{" "}
+          <span className="font-medium text-foreground">{actor.userName}</span>
+        </span>
+      </span>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 text-xs rounded-md border px-3 py-2",
+        approved
+          ? "bg-success/5 border-success/20"
+          : "bg-destructive/5 border-destructive/20",
+      )}
+    >
+      <Icon className={cn("h-3.5 w-3.5 shrink-0", tone)} />
+      <span className="text-muted-foreground">
+        {verb}{" "}
+        <span className="font-medium text-foreground">{actor.userName}</span> on{" "}
+        {new Date(actor.at).toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })}
+      </span>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// SubmissionsPanel — the review workflow for ONE tab's records.
+//
+// Encapsulates the search / sortable table / pagination and the detail-review
+// modal (flag, edit, approve, return). Used for both the manager's own direct
+// reports (isMe) and any pinned peer manager's team (Peer Coverage). Approve /
+// return / edit / flag all go through the AllocationsContext by record id — the
+// backend authorizes same-team peers and stamps who actually actioned it, so
+// the exact same handlers work for a peer's records with no special-casing.
+// ---------------------------------------------------------------------------
+
+interface SubmissionsPanelProps {
+  managerId: string;
+  isMe: boolean;
+  /** Human label for empty states, e.g. "your team" or a peer's name. */
+  label: string;
+  filterYear: string;
+  filterMonth: string;
+  dateRange: DateRange | undefined;
+}
+
+const SubmissionsPanel = ({
+  managerId,
+  isMe,
+  label,
+  filterYear,
+  filterMonth,
+  dateRange,
+}: SubmissionsPanelProps) => {
+  const { currentUser } = useAuth();
+  const {
+    getRecordsForManager,
+    approve,
+    returnForRevision,
+    flagActivity,
+    unflagActivity,
+    managerEdit,
+  } = useAllocations();
+  const { addNotification } = useNotifications();
+
+  // Own reports come from the already-loaded context cache; a peer's records
+  // are fetched on demand (only while this tab is mounted/active).
+  const { records: peerRecords, isLoading: peerLoading } = usePeerSubmissions(
+    isMe ? null : managerId,
+  );
+  const baseRecords = isMe ? getRecordsForManager(managerId) : peerRecords;
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [returnConfirmOpen, setReturnConfirmOpen] = useState(false);
+  const [summaryFeedback, setSummaryFeedback] = useState("");
+  const [editedStreams, setEditedStreams] = useState<WorkStreamData[] | null>(
+    null,
+  );
+  const isEditing = editedStreams !== null;
+
+  const [searchTerm, setSearchTerm] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("submitted");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const filteredRecords = useMemo(
+    () => filterRecordsByPeriod(baseRecords, filterYear, filterMonth, dateRange),
+    [baseRecords, filterYear, filterMonth, dateRange],
+  );
+
+  const sortedRecords = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    const filtered = q
+      ? filteredRecords.filter(
+          (r) =>
+            r.employeeName.toLowerCase().includes(q) ||
+            r.month.toLowerCase().includes(q) ||
+            String(r.year).includes(q) ||
+            r.status.toLowerCase().includes(q),
+        )
+      : filteredRecords;
+
+    return [...filtered].sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case "employee":
+          cmp = a.employeeName.localeCompare(b.employeeName);
+          break;
+        case "period":
+          cmp = periodKey(a) - periodKey(b);
+          break;
+        case "status":
+          cmp = a.status.localeCompare(b.status);
+          break;
+        case "submitted": {
+          const av = a.submittedAt ? new Date(a.submittedAt).getTime() : null;
+          const bv = b.submittedAt ? new Date(b.submittedAt).getTime() : null;
+          if (av === null && bv === null) return 0;
+          if (av === null) return 1;
+          if (bv === null) return -1;
+          cmp = av - bv;
+          break;
+        }
+        case "streams":
+          cmp = a.streams.length - b.streams.length;
+          break;
+      }
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+  }, [filteredRecords, searchTerm, sortKey, sortDirection]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, sortKey, sortDirection, filterYear, filterMonth, dateRange]);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(sortedRecords.length / SUBMISSIONS_PAGE_SIZE),
+  );
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const pagedRecords = useMemo(
+    () =>
+      sortedRecords.slice(
+        (safePage - 1) * SUBMISSIONS_PAGE_SIZE,
+        safePage * SUBMISSIONS_PAGE_SIZE,
+      ),
+    [sortedRecords, safePage],
+  );
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDirection(key === "submitted" ? "desc" : "asc");
+    }
+  };
+
+  const selected = useMemo(
+    () => baseRecords.find((r) => r.id === selectedId),
+    [baseRecords, selectedId],
+  );
+
+  useEffect(() => {
+    setEditedStreams(null);
+  }, [selectedId]);
+
+  const displayStreams = editedStreams ?? selected?.streams ?? [];
+  const displayTotal = sumStreamTotals(displayStreams);
+
+  const flagEntries = useMemo(
+    () => (selected?.flags ? Object.entries(selected.flags) : []),
+    [selected],
+  );
+  const flagCount = flagEntries.length;
+  const canReview = selected?.status === "Pending Review";
+
+  const handleStartEdit = () => {
+    if (!selected) return;
+    setEditedStreams(
+      selected.streams.map((s) => ({
+        ...s,
+        activities: s.activities.map((a) => ({ ...a })),
+      })),
+    );
+  };
+
+  const handleCancelEdit = () => {
+    setEditedStreams(null);
+    toast.info("Edits discarded.");
+  };
+
+  const handleSaveEdit = () => {
+    if (!selected || !editedStreams || !currentUser) return;
+    if (Math.abs(displayTotal - 100) > 0.01) {
+      toast.error(
+        `Total allocation must equal 100% (currently ${displayTotal.toFixed(2)}%).`,
+      );
+      return;
+    }
+    managerEdit(selected.id, editedStreams, {
+      userId: currentUser.id,
+      userName: `${currentUser.firstName} ${currentUser.lastName}`,
+    });
+    setEditedStreams(null);
+    toast.success("Edits saved", {
+      description: `${selected.employeeName}'s allocation updated. Flags cleared.`,
+    });
+  };
+
+  const handleApprove = () => {
+    if (!selected || !currentUser) return;
+
+    if (isEditing && editedStreams) {
+      if (Math.abs(displayTotal - 100) > 0.01) {
+        toast.error(
+          `Total must equal 100% before approving (currently ${displayTotal.toFixed(2)}%).`,
+        );
+        return;
+      }
+      managerEdit(selected.id, editedStreams, {
+        userId: currentUser.id,
+        userName: `${currentUser.firstName} ${currentUser.lastName}`,
+      });
+    } else if (flagCount > 0) {
+      toast.error("Clear all flags before approving.", {
+        description: `${flagCount} ${flagCount === 1 ? "card is" : "cards are"} still flagged.`,
+      });
+      return;
+    }
+
+    approve(selected.id);
+    toast.success("Allocation approved", {
+      description: `${selected.employeeName} — ${selected.month} ${selected.year}`,
+    });
+    addNotification({
+      targetUserId: selected.employeeId,
+      title: "Allocation Approved",
+      message: `Your work allocation for ${selected.month} ${selected.year} has been approved.`,
+      type: "success",
+      actionUrl: "/allocations",
+    });
+    setSelectedId(null);
+  };
+
+  const openReturnConfirm = () => {
+    if (isEditing && editedStreams) {
+      if (!selected || !currentUser) return;
+      if (Math.abs(displayTotal - 100) > 0.01) {
+        toast.error(
+          `Total must equal 100% before returning (currently ${displayTotal.toFixed(2)}%).`,
+        );
+        return;
+      }
+      managerEdit(selected.id, editedStreams, {
+        userId: currentUser.id,
+        userName: `${currentUser.firstName} ${currentUser.lastName}`,
+      });
+      setEditedStreams(null);
+    } else if (flagCount === 0) {
+      toast.error("Flag at least one card before returning for revision.");
+      return;
+    }
+    setReturnConfirmOpen(true);
+  };
+
+  const handleReturn = () => {
+    if (!selected) return;
+    const reason = summaryFeedback.trim();
+    returnForRevision(selected.id, reason || undefined);
+    toast.success("Returned for revision", {
+      description: `${selected.employeeName} will see your changes and can revise.`,
+    });
+    addNotification({
+      targetUserId: selected.employeeId,
+      title: "Revision Requested",
+      message:
+        `Your work allocation for ${selected.month} ${selected.year} requires changes.` +
+        (reason ? ` Reason: ${reason}` : ""),
+      type: "warning",
+      actionUrl: "/allocations",
+    });
+    setReturnConfirmOpen(false);
+    setSelectedId(null);
+    setSummaryFeedback("");
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-muted-foreground">
+          {sortedRecords.length} submission
+          {sortedRecords.length === 1 ? "" : "s"}
+          {searchTerm.trim() && filteredRecords.length !== sortedRecords.length
+            ? ` of ${filteredRecords.length}`
+            : ""}
+        </p>
+        <div className="relative w-full sm:w-72">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search name, period, status…"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-9 h-9"
+          />
+        </div>
+      </div>
+
+      {!isMe && peerLoading && baseRecords.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">
+          Loading {label}'s submissions…
+        </p>
+      ) : baseRecords.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">
+          No submissions from {isMe ? "your team" : label} yet.
+        </p>
+      ) : filteredRecords.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">
+          No submissions in the selected time period.
+        </p>
+      ) : sortedRecords.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">
+          No submissions match your search.
+        </p>
+      ) : (
+        <>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>
+                  <SortableHeader
+                    label="Employee"
+                    columnKey="employee"
+                    currentKey={sortKey}
+                    direction={sortDirection}
+                    onSort={handleSort}
+                  />
+                </TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Period"
+                    columnKey="period"
+                    currentKey={sortKey}
+                    direction={sortDirection}
+                    onSort={handleSort}
+                  />
+                </TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Status"
+                    columnKey="status"
+                    currentKey={sortKey}
+                    direction={sortDirection}
+                    onSort={handleSort}
+                  />
+                </TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Submitted"
+                    columnKey="submitted"
+                    currentKey={sortKey}
+                    direction={sortDirection}
+                    onSort={handleSort}
+                  />
+                </TableHead>
+                <TableHead>
+                  <SortableHeader
+                    label="Streams"
+                    columnKey="streams"
+                    currentKey={sortKey}
+                    direction={sortDirection}
+                    onSort={handleSort}
+                  />
+                </TableHead>
+                <TableHead></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pagedRecords.map((r) => (
+                <TableRow
+                  key={r.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => setSelectedId(r.id)}
+                >
+                  <TableCell className="font-medium">{r.employeeName}</TableCell>
+                  <TableCell>
+                    {r.month} {r.year}
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col items-start gap-1">
+                      <Badge className={statusColor[r.status]}>{r.status}</Badge>
+                      {/* Epic 3 — who approved / returned this record. */}
+                      <ActionedByIndicator record={r} variant="inline" />
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {r.submittedAt
+                      ? new Date(r.submittedAt).toLocaleDateString()
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="text-sm">{r.streams.length}</TableCell>
+                  <TableCell>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          <TablePagination
+            page={currentPage}
+            pageSize={SUBMISSIONS_PAGE_SIZE}
+            totalItems={sortedRecords.length}
+            onPageChange={setCurrentPage}
+          />
+        </>
+      )}
+
+      {/* Detail modal */}
+      <Dialog
+        open={!!selectedId}
+        onOpenChange={(o) => !o && setSelectedId(null)}
+      >
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          {selected && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center justify-between gap-3">
+                  <div>
+                    <p>{selected.employeeName}</p>
+                    <p className="text-sm font-normal text-muted-foreground">
+                      {selected.month} {selected.year} · {selected.team}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap justify-end">
+                    {flagCount > 0 && !isEditing && (
+                      <Badge
+                        variant="outline"
+                        className="text-warning border-warning/40 bg-warning/10"
+                      >
+                        <Flag className="h-3 w-3 mr-1" />
+                        {flagCount} flagged
+                      </Badge>
+                    )}
+                    {isEditing && (
+                      <Badge className="bg-primary/10 text-primary border-primary/30">
+                        <Pencil className="h-3 w-3 mr-1" />
+                        Editing
+                      </Badge>
+                    )}
+                    <Badge className={statusColor[selected.status]}>
+                      {selected.status}
+                    </Badge>
+                  </div>
+                </DialogTitle>
+              </DialogHeader>
+
+              {/* Epic 3 — accountability banner: who approved / returned. */}
+              <ActionedByIndicator record={selected} variant="banner" />
+
+              {/* Audit stamp — who last edited and when. */}
+              {selected.lastEditedBy && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 border rounded-md px-3 py-2">
+                  <History className="h-3 w-3 shrink-0" />
+                  <span>
+                    Last edited by{" "}
+                    <span className="font-medium text-foreground">
+                      {selected.lastEditedBy.userName}
+                    </span>{" "}
+                    on{" "}
+                    {new Date(selected.lastEditedBy.at).toLocaleString(undefined, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </span>
+                </div>
+              )}
+
+              <div className="space-y-4 py-2">
+                {isEditing && editedStreams ? (
+                  <ReviewEditor
+                    streams={editedStreams}
+                    onStreamsChange={setEditedStreams}
+                  />
+                ) : (
+                  displayStreams.map((stream, si) => {
+                    const subtotal = stream.activities.reduce(
+                      (a, b) => a + b.percentage,
+                      0,
+                    );
+                    return (
+                      <div key={si} className="border rounded-lg overflow-hidden">
+                        <div className="px-4 py-2 bg-muted/40 flex items-center justify-between border-l-4 border-l-primary">
+                          <span className="font-semibold text-sm">
+                            {stream.category}
+                          </span>
+                          <span className="text-sm text-primary font-semibold">
+                            {subtotal.toFixed(2)}%
+                          </span>
+                        </div>
+                        <div className="divide-y">
+                          {stream.activities.map((a) => {
+                            const flag = selected.flags?.[a.id];
+                            return (
+                              <div
+                                key={a.id}
+                                className={`p-3 text-sm ${flag ? "bg-warning/10" : ""}`}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-medium">
+                                        {a.workType}{" "}
+                                        <span className="text-muted-foreground font-normal">
+                                          · {a.client}
+                                        </span>
+                                      </span>
+                                      {a.subCategory && (
+                                        <span
+                                          className="inline-flex items-center h-5 px-1.5 rounded text-[10px] font-semibold uppercase tracking-wider"
+                                          style={{
+                                            background: "hsl(var(--primary-pastel))",
+                                            color: "hsl(var(--primary))",
+                                            letterSpacing: "0.03em",
+                                          }}
+                                          title={`Sub category: ${a.subCategory}`}
+                                        >
+                                          {a.subCategory}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {a.description && (
+                                      <p className="text-xs text-muted-foreground mt-1 whitespace-pre-line">
+                                        {a.description}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="text-primary font-semibold">
+                                      {a.percentage}%
+                                    </span>
+                                    {canReview && (
+                                      <FlagControl
+                                        isFlagged={!!flag}
+                                        existingReason={flag?.reason}
+                                        onFlag={(reason) =>
+                                          flagActivity(selected.id, a.id, reason)
+                                        }
+                                        onClear={() =>
+                                          unflagActivity(selected.id, a.id)
+                                        }
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                                {flag && (
+                                  <div className="mt-2 rounded-md bg-destructive/8 border border-destructive/20 p-2 text-xs text-foreground">
+                                    <span className="font-medium">Flagged:</span>{" "}
+                                    {flag.reason}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+
+                {isEditing && (
+                  <div className="flex items-center justify-end gap-2 text-sm border-t pt-3">
+                    <span className="text-muted-foreground">Grand Total:</span>
+                    <span
+                      className={`font-bold text-lg tabular-nums ${
+                        Math.abs(displayTotal - 100) < 0.01
+                          ? "text-success"
+                          : "text-destructive"
+                      }`}
+                    >
+                      {displayTotal.toFixed(2)}%
+                    </span>
+                  </div>
+                )}
+
+                {selected.feedback && (
+                  <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3">
+                    <p className="text-xs font-medium text-destructive">
+                      Previous summary feedback:
+                    </p>
+                    <p className="text-sm text-foreground mt-1">
+                      {selected.feedback}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="gap-2">
+                {canReview ? (
+                  isEditing ? (
+                    <>
+                      <Button variant="outline" onClick={handleCancelEdit}>
+                        Cancel Edits
+                      </Button>
+                      <Button variant="secondary" onClick={handleSaveEdit}>
+                        Save Edits
+                      </Button>
+                      <Button variant="outline" onClick={openReturnConfirm}>
+                        Save &amp; Return for Revision
+                      </Button>
+                      <Button onClick={handleApprove}>Save &amp; Approve</Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        variant="outline"
+                        onClick={handleStartEdit}
+                        className="gap-1"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={openReturnConfirm}
+                        disabled={flagCount === 0}
+                      >
+                        Return for Revision
+                        {flagCount > 0 ? ` (${flagCount})` : ""}
+                      </Button>
+                      <Button onClick={handleApprove} disabled={flagCount > 0}>
+                        Approve
+                      </Button>
+                    </>
+                  )
+                ) : (
+                  <Button variant="outline" onClick={() => setSelectedId(null)}>
+                    Close
+                  </Button>
+                )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm return-for-revision (summary comment optional) */}
+      <Dialog open={returnConfirmOpen} onOpenChange={setReturnConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Return for Revision</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {selected?.employeeName} will see the current state of their
+            allocation{" "}
+            {flagCount > 0 && !isEditing
+              ? `with ${flagCount} flagged ${flagCount === 1 ? "card" : "cards"} and `
+              : ""}
+            the optional summary comment below.
+          </p>
+          <Textarea
+            value={summaryFeedback}
+            onChange={(e) => setSummaryFeedback(e.target.value)}
+            placeholder="Optional summary — overall pattern, what to prioritize, etc."
+            className="min-h-[100px]"
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReturnConfirmOpen(false);
+                setSummaryFeedback("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleReturn}>Send to Employee</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// TeamSubmissionsTabs — dynamic tabbed container (Epic 2).
+//
+// Tab 0 is always the manager's own direct reports. Additional tabs are the
+// manager's PERSISTED peer-coverage tabs (loaded from the DB, so they survive
+// across sessions/devices). The "+" opens a Command popover of eligible peer
+// managers (same team, not already pinned); selecting one persists the tab and
+// switches to it. Peer tabs carry an "×" to unpin.
+// ---------------------------------------------------------------------------
+
+interface TeamSubmissionsTabsProps {
+  filterYear: string;
+  filterMonth: string;
+  dateRange: DateRange | undefined;
+}
+
+const TeamSubmissionsTabs = ({
+  filterYear,
+  filterMonth,
+  dateRange,
+}: TeamSubmissionsTabsProps) => {
+  const { currentUser } = useAuth();
+  const { peers } = usePeerManagers();
+  const { tabs, addTab, removeTab } = usePeerCoverageTabs();
+
+  const [active, setActive] = useState("me");
+  const [popoverOpen, setPopoverOpen] = useState(false);
+
+  // The rendered tab list: "me" is always index 0; peers follow in the order
+  // they were pinned. Kept as a plain array so <TabsList> maps over it.
+  const activeTabs = useMemo(
+    () => [
+      { id: "me", name: "My Direct Reports" },
+      ...tabs.map((t) => ({ id: t.id, name: t.name })),
+    ],
+    [tabs],
+  );
+
+  // If the active peer tab was unpinned (or pruned server-side), fall back to
+  // the always-present "me" tab so the panel never points at a missing tab.
+  useEffect(() => {
+    if (!activeTabs.some((t) => t.id === active)) setActive("me");
+  }, [activeTabs, active]);
+
+  // Peers eligible to ADD = same-team managers not already pinned.
+  const pinnedIds = useMemo(() => new Set(tabs.map((t) => t.id)), [tabs]);
+  const availablePeers = useMemo(
+    () => peers.filter((p) => !pinnedIds.has(p.id)),
+    [peers, pinnedIds],
+  );
+
+  const handleAdd = async (peer: PeerManager) => {
+    setPopoverOpen(false);
+    try {
+      await addTab(peer.id);
+      setActive(peer.id);
+      toast.success(`Added ${peer.name}'s team`, {
+        description: "You can now review and action their submissions.",
+      });
+    } catch {
+      toast.error(`Couldn't add ${peer.name}. They may no longer be a peer.`);
+    }
+  };
+
+  const handleRemove = async (peer: { id: string; name: string }) => {
+    if (active === peer.id) setActive("me");
+    try {
+      await removeTab(peer.id);
+      toast.info(`Removed ${peer.name}'s coverage tab.`);
+    } catch {
+      toast.error("Couldn't remove the tab. Please try again.");
+    }
+  };
+
+  if (!currentUser) return null;
+
+  return (
+    <Card>
+      <Tabs value={active} onValueChange={setActive}>
+        <CardHeader className="pb-0">
+          <CardTitle className="text-base">Team Submissions</CardTitle>
+          <TabsList className="mt-3 h-auto flex-wrap justify-start gap-1 bg-transparent p-0">
+            {activeTabs.map((tab) => (
+              <TabsTrigger
+                key={tab.id}
+                value={tab.id}
+                className="group data-[state=active]:bg-primary/10 data-[state=active]:text-primary data-[state=active]:shadow-none border data-[state=active]:border-primary/30 gap-1.5"
+              >
+                {tab.id === "me" ? (
+                  <Users className="h-3.5 w-3.5" />
+                ) : (
+                  <UserCheck className="h-3.5 w-3.5" />
+                )}
+                {tab.name}
+                {tab.id !== "me" && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Remove ${tab.name} tab`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemove(tab);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleRemove(tab);
+                      }
+                    }}
+                    className="ml-0.5 -mr-1 rounded p-0.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <X className="h-3 w-3" />
+                  </span>
+                )}
+              </TabsTrigger>
+            ))}
+
+            {/* "+" — add a peer coverage tab. */}
+            <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 shrink-0"
+                  aria-label="Add peer coverage tab"
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Search peer managers…" />
+                  <CommandList>
+                    <CommandEmpty>
+                      {peers.length === 0
+                        ? "No peer managers in your team."
+                        : "All peers already added."}
+                    </CommandEmpty>
+                    {availablePeers.length > 0 && (
+                      <CommandGroup heading="Same-team peer managers">
+                        {availablePeers.map((p) => (
+                          <CommandItem
+                            key={p.id}
+                            value={`${p.name} ${p.jobTitle}`}
+                            onSelect={() => handleAdd(p)}
+                            className="gap-2"
+                          >
+                            <UserCheck className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <div className="min-w-0">
+                              <p className="text-sm truncate">{p.name}</p>
+                              <p className="text-[11px] text-muted-foreground truncate">
+                                {p.jobTitle}
+                              </p>
+                            </div>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    )}
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </TabsList>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {activeTabs.map((tab) => (
+            <TabsContent key={tab.id} value={tab.id} className="mt-0">
+              <SubmissionsPanel
+                managerId={tab.id === "me" ? currentUser.id : tab.id}
+                isMe={tab.id === "me"}
+                label={tab.name}
+                filterYear={filterYear}
+                filterMonth={filterMonth}
+                dateRange={dateRange}
+              />
+            </TabsContent>
+          ))}
+        </CardContent>
+      </Tabs>
+    </Card>
   );
 };
 

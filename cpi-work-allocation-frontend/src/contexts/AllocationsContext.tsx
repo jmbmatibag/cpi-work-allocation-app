@@ -52,6 +52,18 @@ export interface AllocationRecord {
     userName: string;
     at: string;
   };
+  /**
+   * Peer Coverage accountability — who ACTUALLY approved or returned this
+   * record. Under peer coverage the actor may differ from `managerId` (the
+   * assigned manager). Read-only; assigned by the backend on approve/return.
+   * The display verb ("Approved by" / "Returned by") is derived from
+   * `status`, so this only carries identity + timestamp.
+   */
+  actionedBy?: {
+    userId: string;
+    userName: string;
+    at: string;
+  };
 }
 
 interface AllocationsContextType {
@@ -922,8 +934,10 @@ const STATUS_MAP: Record<string, AllocationStatus> = {
   NeedsRevision:  "Needs Revision",
 };
 
+// Exported so the Peer Coverage hooks can reuse the exact same wire→domain
+// mapping when they fetch a peer manager's submissions directly.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function fromApiRecord(r: any): AllocationRecord {
+export function fromApiRecord(r: any): AllocationRecord {
   return {
     id:            r.id,
     employeeId:    r.employeeId,
@@ -942,6 +956,7 @@ function fromApiRecord(r: any): AllocationRecord {
     ...(r.feedback    != null && { feedback: r.feedback }),
     ...(r.flags && Object.keys(r.flags).length > 0 && { flags: r.flags }),
     ...(r.lastEditedBy && { lastEditedBy: r.lastEditedBy }),
+    ...(r.actionedBy && { actionedBy: r.actionedBy }),
   };
 }
 

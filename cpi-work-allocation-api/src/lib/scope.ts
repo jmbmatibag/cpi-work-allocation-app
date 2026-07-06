@@ -60,6 +60,54 @@ export async function canActOnEmployee(
 }
 
 /**
+ * Peer Coverage — true iff `a` and `b` are DISTINCT managers on the SAME
+ * team. This is the eligibility rule for peer coverage: a manager may only
+ * pin / act on peers who share their exact Team and also carry the Manager
+ * role. Evaluated live against the User table so a subsequent team move
+ * revokes coverage automatically.
+ */
+export async function arePeerManagers(
+  a: string | undefined,
+  b: string | undefined,
+): Promise<boolean> {
+  if (!a || !b || a === b) return false;
+  const [ua, ub] = await Promise.all([
+    prisma.user.findUnique({ where: { id: a }, select: { team: true, roles: true } }),
+    prisma.user.findUnique({ where: { id: b }, select: { team: true, roles: true } }),
+  ]);
+  if (!ua || !ub) return false;
+  return (
+    ua.team === ub.team &&
+    ua.roles.includes('Manager') &&
+    ub.roles.includes('Manager')
+  );
+}
+
+/**
+ * Permission gate for manager-side actions on a single allocation record
+ * (approve / return / edit / flag) — now PEER-AWARE.
+ *
+ * Allowed when the caller:
+ *   - has global scope (Admin / Finance), OR
+ *   - is the record's assigned manager, OR
+ *   - is a same-team peer manager of the record's assigned manager
+ *     (Peer Coverage — they can fully action a peer's submissions).
+ *
+ * Async because the peer check reads the User table.
+ */
+export async function canManageAllocation(
+  userId: string | undefined,
+  userRoles: readonly string[] | undefined,
+  recordManagerId: string | null,
+): Promise<boolean> {
+  if (hasGlobalScope(userRoles)) return true;
+  if (!hasManagerScope(userRoles)) return false;
+  if (recordManagerId && recordManagerId === userId) return true;
+  if (!recordManagerId) return false;
+  return arePeerManagers(userId, recordManagerId);
+}
+
+/**
  * Build the `where.employeeId` clause for list endpoints based on the
  * caller's scope. Returns `null` for global-scope callers — meaning no
  * employee filter at all.
