@@ -1792,10 +1792,10 @@ const SubmissionsPanel = ({
         open={!!selectedId}
         onOpenChange={(o) => !o && setSelectedId(null)}
       >
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden">
           {selected && (
             <>
-              <DialogHeader>
+              <DialogHeader className="shrink-0 px-6 pt-6 pb-4 pr-12 border-b">
                 <DialogTitle className="flex items-center justify-between gap-3">
                   <div>
                     <p>{selected.employeeName}</p>
@@ -1826,8 +1826,9 @@ const SubmissionsPanel = ({
                 </DialogTitle>
               </DialogHeader>
 
-              {/* Epic 3 — accountability banner: who approved / returned. */}
-              <ActionedByIndicator record={selected} variant="banner" />
+              <div className="flex-1 min-h-0 overflow-y-auto scrollbar-modern px-6 py-4 space-y-4">
+                {/* Epic 3 — accountability banner: who approved / returned. */}
+                <ActionedByIndicator record={selected} variant="banner" />
 
               {/* Audit stamp — who last edited and when. */}
               {selected.lastEditedBy && (
@@ -1964,9 +1965,10 @@ const SubmissionsPanel = ({
                     </p>
                   </div>
                 )}
+                </div>
               </div>
 
-              <DialogFooter className="gap-2">
+              <DialogFooter className="shrink-0 gap-2 px-6 py-4 border-t">
                 {canReview ? (
                   isEditing ? (
                     <>
