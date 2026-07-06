@@ -58,56 +58,63 @@ export default function WorkspaceTipModal({
 
   return (
     <Dialog open onOpenChange={() => handleClose()}>
-      <DialogContent className="max-w-xl overflow-hidden">
+      {/* Flex column so the header/footer stay put and only the tip list
+          scrolls — keeps the "Got it" button always visible instead of the
+          whole modal overflowing the viewport on short screens. */}
+      <DialogContent className="max-w-xl !flex !flex-col gap-0 !p-0 overflow-hidden">
         {/* Accent bar */}
         <div
-          className="absolute top-0 left-0 right-0 h-1.5"
+          className="h-1.5 shrink-0"
           style={{ background: "linear-gradient(90deg, hsl(var(--primary)), hsl(262 60% 55%))" }}
         />
 
-        <DialogHeader className="pt-2">
-          <DialogTitle className="text-xl font-semibold text-foreground">
-            {title}
-          </DialogTitle>
-          {subtitle && (
-            <DialogDescription className="text-sm mt-1 text-muted-foreground">
-              {subtitle}
-            </DialogDescription>
-          )}
-        </DialogHeader>
+        {/* Scrollable content region */}
+        <div className="scrollbar-modern flex-1 min-h-0 overflow-y-auto px-6 pt-5 pb-3">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-semibold text-foreground">
+              {title}
+            </DialogTitle>
+            {subtitle && (
+              <DialogDescription className="text-sm mt-1 text-muted-foreground">
+                {subtitle}
+              </DialogDescription>
+            )}
+          </DialogHeader>
 
-        {/* Tip cards */}
-        <div className="space-y-3 py-1">
-          {tips.map((tip, i) => (
-            <div
-              key={i}
-              className="flex gap-3 rounded-lg p-3 bg-muted/60 border border-border"
-            >
-              {/* Step badge */}
+          {/* Tip cards */}
+          <div className="space-y-3 py-4">
+            {tips.map((tip, i) => (
               <div
-                className="flex items-center justify-center w-7 h-7 rounded-full shrink-0 text-[11px] font-bold bg-primary text-primary-foreground"
+                key={i}
+                className="flex gap-3 rounded-lg p-3 bg-muted/60 border border-border"
               >
-                {i + 1}
+                {/* Step badge */}
+                <div
+                  className="flex items-center justify-center w-7 h-7 rounded-full shrink-0 text-[11px] font-bold bg-primary text-primary-foreground"
+                >
+                  {i + 1}
+                </div>
+                <div className="space-y-0.5 min-w-0">
+                  <p className="text-[13px] font-semibold text-foreground">
+                    {tip.heading}
+                  </p>
+                  <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+                    {tip.body}
+                  </p>
+                </div>
               </div>
-              <div className="space-y-0.5 min-w-0">
-                <p className="text-[13px] font-semibold text-foreground">
-                  {tip.heading}
-                </p>
-                <p className="text-[12.5px] leading-relaxed text-muted-foreground">
-                  {tip.body}
-                </p>
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
+
+          {note && (
+            <p className="text-[11.5px] leading-relaxed px-0.5 text-muted-foreground">
+              <span className="font-medium">Note:</span> {note}
+            </p>
+          )}
         </div>
 
-        {note && (
-          <p className="text-[11.5px] leading-relaxed px-0.5 text-muted-foreground">
-            <span className="font-medium">Note:</span> {note}
-          </p>
-        )}
-
-        <DialogFooter className="flex items-center gap-3 pt-2 sm:justify-between">
+        {/* Pinned footer — always visible */}
+        <DialogFooter className="shrink-0 border-t border-border px-6 py-4 flex items-center gap-3 sm:justify-between">
           <div className="flex items-center gap-2">
             {!forceOpen && (
               <>

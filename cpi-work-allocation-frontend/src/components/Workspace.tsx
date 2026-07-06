@@ -848,15 +848,20 @@ const Workspace = ({
                         — {parseFloat(subtotal.toFixed(2))}%
                       </span>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteTarget({ type: "stream", streamIdx: sIdx });
-                      }}
-                      className="text-destructive/60 hover:text-destructive transition-colors"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {/* Delete is hidden once the record is locked (Pending
+                        Review / Approved). Approved allocations can only be
+                        collapsed/expanded, never deleted. */}
+                    {!disabled && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteTarget({ type: "stream", streamIdx: sIdx });
+                        }}
+                        className="text-destructive/60 hover:text-destructive transition-colors"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
 
                   {stream.expanded && (
@@ -923,19 +928,21 @@ const Workspace = ({
                                   </Badge>
                                 )}
                               </div>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setDeleteTarget({
-                                    type: "activity",
-                                    streamIdx: sIdx,
-                                    actIdx: aIdx,
-                                  });
-                                }}
-                                className="text-destructive/60 hover:text-destructive shrink-0 ml-2"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
+                              {!disabled && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setDeleteTarget({
+                                      type: "activity",
+                                      streamIdx: sIdx,
+                                      actIdx: aIdx,
+                                    });
+                                  }}
+                                  className="text-destructive/60 hover:text-destructive shrink-0 ml-2"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                             </div>
 
                             {activity.expanded && (

@@ -277,7 +277,7 @@ const MonthlyAllocations = () => {
   return (
     <>
     <WorkspaceTipModal {...getOnboardingGuide("monthly-allocations")} />
-    <div className="flex h-[calc(100vh-3rem)]">
+    <div className="flex h-full min-h-0">
       <div className="w-[35%] bg-secondary/30 p-6 flex flex-col gap-6 overflow-y-auto border-r">
         {currentUser && (
           <div className="glass-card rounded-xl p-4 space-y-2">

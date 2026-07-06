@@ -2290,6 +2290,9 @@ const EditSubCategory = ({
 
   const [assignedClients, setAssignedClients] = useState<string[]>(sub?.clients ?? []);
   const [clientQuery, setClientQuery] = useState("");
+  // Work Types starts collapsed to leave more room for the client list,
+  // which is the taller, more-scrolled section on small screens.
+  const [workTypesOpen, setWorkTypesOpen] = useState(false);
 
   useEffect(() => {
     setValue(name);
@@ -2336,7 +2339,7 @@ const EditSubCategory = ({
         </DialogDescription>
       </DialogHeader>
 
-      <div className="flex-1 min-h-0 flex flex-col gap-4 pt-2 overflow-hidden">
+      <div className="scrollbar-modern flex-1 min-h-0 flex flex-col gap-4 pt-2 overflow-y-auto">
         <div className="space-y-4 shrink-0">
         <div className="space-y-1.5">
           <Label className="text-xs font-medium">Name</Label>
@@ -2356,22 +2359,33 @@ const EditSubCategory = ({
 
         <div className="pt-1">
           <div className="flex items-center justify-between mb-2">
-            <Label className="text-xs font-medium">
+            <button
+              type="button"
+              onClick={() => setWorkTypesOpen((o) => !o)}
+              className="flex items-center gap-1.5 text-xs font-medium text-foreground transition-colors hover:text-foreground/70"
+              aria-expanded={workTypesOpen}
+            >
+              {workTypesOpen ? (
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
               Work Types <span className="tabular-nums text-muted-foreground">({workTypesHere.length})</span>
-            </Label>
+            </button>
             <GhostAddButton onClick={() => onAddWorkTypeUnder(name)} label="Add work type" small />
           </div>
-          {workTypesHere.length === 0 ? (
-            <p className="text-[12px] py-2 text-muted-foreground">
-              None yet. Attach existing work types or create new ones.
-            </p>
-          ) : (
-            <div className="flex flex-wrap items-center gap-1.5">
-              {workTypesHere.map((wt) => (
-                <WorkTypeInlineChip key={wt.name} workType={wt} parentName={name} onDetach={onDetachWorkType} />
-              ))}
-            </div>
-          )}
+          {workTypesOpen &&
+            (workTypesHere.length === 0 ? (
+              <p className="text-[12px] py-2 text-muted-foreground">
+                None yet. Attach existing work types or create new ones.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {workTypesHere.map((wt) => (
+                  <WorkTypeInlineChip key={wt.name} workType={wt} parentName={name} onDetach={onDetachWorkType} />
+                ))}
+              </div>
+            ))}
         </div>
 
         </div>
@@ -2398,7 +2412,7 @@ const EditSubCategory = ({
                 className="h-9 pl-8 text-[13px]"
               />
             </div>
-            <div className="mt-2 flex-1 min-h-0 overflow-y-auto rounded-md divide-y divide-border border border-border [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
+            <div className="scrollbar-modern mt-2 flex-1 min-h-[9rem] overflow-y-auto rounded-md divide-y divide-border border border-border">
               {visibleClients.length === 0 && (
                 <p className="px-3 py-2 text-[12px] text-muted-foreground">
                   No clients match “{clientQuery}”.

@@ -220,7 +220,7 @@ const PerformanceReview = () => {
   return (
     <>
     <WorkspaceTipModal {...getOnboardingGuide("performance-summary")} />
-    <div className="p-6 space-y-6 h-[calc(100vh-3rem)] overflow-y-auto">
+    <div className="p-4 sm:p-6 space-y-6 h-full min-h-0 overflow-y-auto">
       <div className="no-print space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>

@@ -974,7 +974,7 @@ const DailyJournal = () => {
   return (
     <>
     <WorkspaceTipModal {...getOnboardingGuide("daily-journal")} />
-    <div className="flex h-[calc(100vh-3rem)] overflow-hidden">
+    <div className="flex h-full min-h-0 overflow-hidden">
       {/* ── Left: Calendar sidebar ── */}
       <div className="w-[340px] border-r bg-secondary/30 p-6 flex flex-col gap-4 shrink-0">
         <div className="flex items-center gap-2">

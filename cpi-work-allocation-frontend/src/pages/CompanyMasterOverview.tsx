@@ -565,7 +565,7 @@ const CompanyMasterOverview = () => {
   };
 
   return (
-    <div className="p-6 space-y-5 overflow-y-auto h-[calc(100vh-3rem)]">
+    <div className="p-4 sm:p-6 space-y-5 overflow-y-auto h-full min-h-0">
       {/* Title */}
       <div className="flex items-start gap-4">
         <div className="mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 ring-1 ring-primary/20">

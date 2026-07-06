@@ -400,7 +400,7 @@ const EmployeeDashboard = () => {
   });
 
   return (
-    <div className="p-6 space-y-6 overflow-y-auto h-[calc(100vh-3rem)]">
+    <div className="p-4 sm:p-6 space-y-6 overflow-y-auto h-full min-h-0">
       <div>
         <h1 className="text-2xl font-bold text-foreground">
           Welcome back, {currentUser?.firstName}
@@ -487,7 +487,7 @@ const EmployeeDashboard = () => {
       )}
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="flex flex-col sm:grid sm:grid-cols-3 gap-3 sm:gap-4">
         <Card>
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -567,7 +567,7 @@ const EmployeeDashboard = () => {
       </div>
 
       {/* Charts + AI Insights */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="flex flex-col lg:grid lg:grid-cols-3 gap-4">
         <AllocationTrendChart
           trendData={trendData}
           allCategories={allCategories}

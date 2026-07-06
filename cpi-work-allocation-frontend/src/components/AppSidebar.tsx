@@ -82,8 +82,15 @@ const AppSidebar = () => {
   return (
     <Sidebar collapsible="icon">
       <SidebarContent>
-        {/* Brand */}
-        <div className="flex items-center gap-3 px-4 py-4 border-b border-sidebar-border">
+        {/* Brand — h-12 matches the top header bar's height so the two
+            bottom borders line up across the sidebar/content divide. When
+            collapsed, center the logo in the icon rail (no side padding) so
+            it lines up with the nav icons below. */}
+        <div
+          className={`flex items-center gap-3 h-12 border-b border-sidebar-border shrink-0 ${
+            collapsed ? "justify-center px-0" : "px-4"
+          }`}
+        >
           <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 flex items-center justify-center">
             <img src="/cpi-logo.png" alt="CPI Logo" className="w-full h-full object-contain" />
           </div>

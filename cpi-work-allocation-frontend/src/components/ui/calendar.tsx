@@ -33,7 +33,11 @@ function Calendar({ className, classNames, showOutsideDays = true, ...props }: C
         day_range_end: "day-range-end",
         day_selected:
           "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
-        day_today: "text-orange-500 font-black text-[15px] aria-selected:text-primary-foreground",
+        // Today: a subtle inset ring in the brand color instead of the old
+        // oversized orange number, so it reads as "today" without breaking
+        // the calendar's visual rhythm. The ring is dropped when the day is
+        // also selected (the filled primary background stands in for it).
+        day_today: "font-semibold ring-1 ring-inset ring-primary/45 aria-selected:ring-0",
         day_outside:
           "day-outside text-muted-foreground opacity-50 aria-selected:bg-accent/50 aria-selected:text-muted-foreground aria-selected:opacity-30",
         day_disabled: "text-muted-foreground opacity-50",

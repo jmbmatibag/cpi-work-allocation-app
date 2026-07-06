@@ -547,7 +547,7 @@ const TeamHub = () => {
   };
 
   return (
-    <div className="p-6 space-y-6 overflow-y-auto h-[calc(100vh-3rem)]">
+    <div className="p-4 sm:p-6 space-y-6 overflow-y-auto h-full min-h-0">
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
@@ -802,17 +802,33 @@ const TeamHub = () => {
           </div>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 overflow-hidden">
-          <div className="flex flex-col md:flex-row gap-6 h-full min-h-0">
+          {/* Stack calendar over the feed until there's real width to spare.
+              This card lives in a 2-col grid at lg, so it is only ~400px
+              wide there — going side-by-side before xl squishes the feed
+              into an unreadable sliver. */}
+          <div className="flex flex-col xl:flex-row gap-6 h-full min-h-0">
             {/* Calendar panel — renders at its natural height; no
                 overflow constraint so no scrollbar appears around the
                 calendar widget itself. The activity feed beside it
                 absorbs the remaining vertical space. */}
-            <div className="shrink-0 space-y-3 pr-1">
+            {/* Full width when stacked (small screens) so the dates spread
+                across the card with no empty gap on the right; a fixed,
+                natural width once it sits beside the feed at xl. */}
+            <div className="w-full xl:w-[300px] shrink-0 space-y-3">
               <Calendar
                 mode="single"
                 selected={selectedCalDate}
                 onSelect={(d) => d && setSelectedCalDate(d)}
-                className="rounded-xl border bg-card"
+                className="rounded-xl border bg-card w-full"
+                classNames={{
+                  month: "w-full space-y-4",
+                  table: "w-full border-collapse space-y-1",
+                  head_row: "flex w-full",
+                  head_cell:
+                    "text-muted-foreground rounded-md flex-1 font-normal text-[0.8rem]",
+                  row: "flex w-full mt-2",
+                  cell: "h-9 flex-1 text-center text-sm p-0 relative [&:has([aria-selected].day-range-end)]:rounded-r-md [&:has([aria-selected].day-outside)]:bg-accent/50 first:[&:has([aria-selected])]:rounded-l-md last:[&:has([aria-selected])]:rounded-r-md focus-within:relative focus-within:z-20",
+                }}
                 modifiers={{
                   hasActivity: (date) =>
                     teamDatesWithActivity.has(format(date, "yyyy-MM-dd")),

@@ -70,28 +70,33 @@ export function BulkActionBar({
       // it never traps focus or intercepts clicks while off-screen.
       aria-hidden={!visible}
       className={[
-        "fixed bottom-8 left-1/2 z-50 -translate-x-1/2",
-        "transition-all duration-300 ease-out",
+        "fixed bottom-8 left-1/2 z-50 -translate-x-1/2 will-change-transform",
+        "transition-all duration-300 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
         visible
-          ? "translate-y-0 opacity-100"
-          : "pointer-events-none translate-y-4 opacity-0",
+          ? "translate-y-0 scale-100 opacity-100"
+          : "pointer-events-none translate-y-8 scale-90 opacity-0",
       ].join(" ")}
     >
       <div
         className={[
-          "flex items-center gap-1 rounded-full py-1.5 pl-4 pr-2",
-          "border border-border/60 bg-background/80 shadow-2xl",
-          "supports-[backdrop-filter]:bg-background/60 backdrop-blur-xl",
-          "dark:border-white/10 dark:bg-zinc-900/80 dark:supports-[backdrop-filter]:bg-zinc-900/70",
+          "flex items-center gap-1 rounded-full py-2 pl-5 pr-2.5",
+          // High-contrast "command bar": a solid dark pill so it lifts off
+          // the busy table instead of blending in. In dark mode it sits a
+          // shade LIGHTER than the near-black page so it still reads as
+          // elevated. Kept slightly translucent + blurred for a glass hint.
+          "bg-zinc-900/95 text-zinc-50 backdrop-blur-xl dark:bg-zinc-800/95",
+          "border border-white/10 ring-1 ring-black/5 dark:ring-white/10",
+          // Layered drop shadow + soft ambient glow for real elevation.
+          "shadow-[0_12px_40px_-4px_rgba(0,0,0,0.45),0_4px_12px_-2px_rgba(0,0,0,0.35)]",
         ].join(" ")}
       >
         {/* Selection count */}
-        <span className="whitespace-nowrap pr-1 text-sm font-medium tabular-nums text-foreground">
+        <span className="whitespace-nowrap pr-1 text-sm font-medium tabular-nums text-zinc-50">
           <span className="font-semibold">{displayCount}</span>{" "}
-          <span className="text-muted-foreground">selected</span>
+          <span className="text-zinc-400">selected</span>
         </span>
 
-        <Separator orientation="vertical" className="mx-1 h-5" />
+        <Separator orientation="vertical" className="mx-1 h-5 bg-white/15" />
 
         {/* Change manager */}
         <IconAction
@@ -113,7 +118,7 @@ export function BulkActionBar({
                   size="icon"
                   disabled={pending}
                   aria-label="Toggle Scheduled Reminders"
-                  className="h-9 w-9 rounded-full text-muted-foreground hover:text-foreground"
+                  className="h-9 w-9 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white"
                 >
                   <Bell className="h-4 w-4" />
                 </Button>
@@ -151,7 +156,7 @@ export function BulkActionBar({
           label="Delete Selected"
           onClick={onDelete}
           disabled={pending}
-          className="text-red-500 hover:bg-red-500/10 hover:text-red-600"
+          className="text-red-400 hover:bg-red-500/15 hover:text-red-300"
         >
           <Trash2 className="h-4 w-4" />
         </IconAction>
@@ -193,7 +198,7 @@ function IconAction({
           disabled={disabled}
           aria-label={label}
           className={[
-            "h-9 w-9 rounded-full text-muted-foreground hover:text-foreground",
+            "h-9 w-9 rounded-full text-zinc-300 hover:bg-white/10 hover:text-white",
             className ?? "",
           ].join(" ")}
         >
