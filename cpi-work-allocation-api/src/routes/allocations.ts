@@ -22,6 +22,10 @@ const managerOrAbove = requireRole('Manager', 'Finance', 'Admin');
 router.post('/', validate(UpsertDraftSchema), ctrl.upsertDraft);
 router.get('/', validate(ListAllocationsQuerySchema, 'query'), ctrl.list);
 router.get('/:id', validate(IdParamSchema, 'params'), ctrl.getOne);
+// Read-only audit timeline for one record. Authorization is enforced inside
+// the controller (self / direct manager / global / same-team peer), so no
+// role gate here — an employee can see the history of their own allocation.
+router.get('/:id/history', validate(IdParamSchema, 'params'), ctrl.history);
 
 router.post(
   '/:id/submit',

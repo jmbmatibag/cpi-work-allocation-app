@@ -93,6 +93,26 @@ export interface ApiAllocationRecord {
   actionedBy?: { userId: string; userName: string; at: string };
 }
 
+// One event in an allocation's lifecycle timeline (read-only). Sourced from
+// the server-side AuditLog — see GET /api/allocations/:id/history.
+export interface ApiAllocationHistoryEvent {
+  id: number;
+  // Stable, UI-facing category the timeline renders an icon/tone for.
+  eventType: 'SUBMITTED' | 'APPROVED' | 'REVISION_REQUESTED' | 'EDITED';
+  // Raw audit action ('submit' | 'approve' | 'return' | 'manager-edit').
+  action: string;
+  // The person who took the action. Null only for legacy/system rows whose
+  // actor was later deleted (AuditLog.userId is SetNull on user delete).
+  actor: { id: string; name: string } | null;
+  // Free-text comment left with the action (revision feedback). Null otherwise.
+  comment: string | null;
+  // Per-card flags captured on a REVISION_REQUESTED event — which specific
+  // cards the manager flagged and the reason left on each. Empty for every
+  // other event type (and for returns predating flag-capture in the payload).
+  flags?: Array<{ card: string; comment: string }>;
+  createdAt: string;
+}
+
 // A peer manager — element of the eligible-peers list and the pinned tabs.
 export interface ApiPeerManager {
   id: string;
@@ -456,6 +476,14 @@ const allocations = {
 
   getOne: (id: string) =>
     get<ApiAllocationRecord>(`/api/allocations/${encodeURIComponent(id)}`),
+
+  // Read-only lifecycle timeline (submitted → returned → approved …), newest
+  // first, with the actor joined in. Powers the Allocation History side panel.
+  history: (id: string, signal?: AbortSignal) =>
+    get<ApiAllocationHistoryEvent[]>(
+      `/api/allocations/${encodeURIComponent(id)}/history`,
+      signal,
+    ),
 
   upsertDraft: (body: {
     employeeId: string;

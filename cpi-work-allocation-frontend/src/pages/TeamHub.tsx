@@ -24,6 +24,7 @@ import type { Employee } from "@/contexts/EmployeesContext";
 import type { WorkStreamData, ActivityData } from "@/components/Workspace";
 import { cn } from "@/lib/utils";
 import { multiWordTagPattern } from "@/lib/tagHighlight";
+import AllocationHistorySheet from "@/components/AllocationHistorySheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1868,6 +1869,14 @@ const SubmissionsPanel = ({
                     <Badge className={statusColor[selected.status]}>
                       {selected.status}
                     </Badge>
+                    {/* Activity timeline — available once the record has a
+                        lifecycle (i.e. has been submitted at least once). */}
+                    {selected.status !== "Draft" && (
+                      <AllocationHistorySheet
+                        allocationId={selected.id}
+                        subtitle={`${selected.employeeName} · ${selected.month} ${selected.year}`}
+                      />
+                    )}
                   </div>
                 </DialogTitle>
               </DialogHeader>

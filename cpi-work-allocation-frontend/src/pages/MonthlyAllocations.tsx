@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import AllocationHistorySheet from "@/components/AllocationHistorySheet";
 import { toast } from "sonner";
 import { CheckCircle, AlertTriangle, Flag } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -310,7 +311,17 @@ const MonthlyAllocations = () => {
               <p className="font-semibold text-foreground">
                 {currentUser.firstName} {currentUser.lastName}
               </p>
-              <Badge className={statusColor}>{status}</Badge>
+              <div className="flex items-center gap-1">
+                {/* History panel — shown once the record has a lifecycle
+                    (submitted / returned / approved), never for a bare Draft. */}
+                {existingRecord && status !== "Draft" && (
+                  <AllocationHistorySheet
+                    allocationId={existingRecord.id}
+                    subtitle={`${month} ${year}`}
+                  />
+                )}
+                <Badge className={statusColor}>{status}</Badge>
+              </div>
             </div>
             <div className="text-sm space-y-1">
               <div>

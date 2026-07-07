@@ -110,6 +110,20 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
 
   const record = await prisma.$transaction(async (tx) => {
     if (existing) {
+      // Preserve manager flags across a draft autosave. An employee revising a
+      // returned allocation triggers this upsert on every card edit, and the
+      // save deletes + recreates the activity rows. `flattenStreams` carries no
+      // flag fields, so without re-applying them a single edit would wipe every
+      // manager flag from the DB — which then vanishes from BOTH the employee's
+      // revision view AND the manager's review modal on the next refetch.
+      // Flags are cleared ONLY on an explicit submit/resubmit (which recreates
+      // activities without flag data), never on a background draft save.
+      const priorFlags = await tx.allocationActivity.findMany({
+        where: { recordId: existing.id, NOT: { flagReason: null } },
+        select: { id: true, flagReason: true, flaggedAt: true },
+      });
+      const flagById = new Map(priorFlags.map((f) => [f.id, f]));
+
       await tx.allocationActivity.deleteMany({ where: { recordId: existing.id } });
       await tx.allocationRecord.update({
         where: { id: existing.id },
@@ -117,7 +131,17 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
           team: d.team,
           managerId,
           monthIndex: d.monthIndex,
-          activities: { create: activities },
+          activities: {
+            // Re-apply a flag only when the same activity id survives the edit.
+            // A card the employee deleted drops its flag naturally (no matching
+            // id) — correct, the card is gone.
+            create: activities.map((a) => {
+              const prior = flagById.get(a.id);
+              return prior
+                ? { ...a, flagReason: prior.flagReason, flaggedAt: prior.flaggedAt }
+                : a;
+            }),
+          },
         },
       });
       return tx.allocationRecord.findUnique({
@@ -228,6 +252,99 @@ export async function getOne(req: AuthRequest, res: Response): Promise<void> {
   }
 
   res.json(toFrontendRecord(record));
+}
+
+// ── Audit history (read-only lifecycle timeline) ────────────────────────────
+//
+// The full, immutable history of a record's lifecycle already exists: every
+// submit / approve / return / manager-edit writes an AuditLog row transactionally
+// (see the logAuditTx calls throughout this file), stamped with the actor
+// (userId), the action, and a payload carrying fromStatus/toStatus/feedback.
+// Rather than stand up a parallel `allocation_audit_logs` table — which would
+// mean duplicate writes on every mutation and zero history for records that
+// already exist — this endpoint reads that trail back for one record, joins the
+// actor, and normalises each row into a timeline event (newest first).
+
+// The lifecycle actions we surface on the timeline, each mapped to a stable
+// eventType the frontend renders an icon/tone for. Other audited actions
+// (flag / unflag on individual cards) are intentionally excluded — the timeline
+// is the record's lifecycle, not per-activity churn.
+const ALLOCATION_TIMELINE_ACTIONS: Record<string, string> = {
+  submit: 'SUBMITTED',
+  approve: 'APPROVED',
+  return: 'REVISION_REQUESTED',
+  'manager-edit': 'EDITED',
+};
+
+export async function history(req: AuthRequest, res: Response): Promise<void> {
+  const { id } = getValid(req, IdParamSchema, 'params');
+
+  // Load the record first — both to 404 cleanly and to reuse getOne's read
+  // authorization: a caller may read the history if they can act on the
+  // employee (self / direct manager / global) OR are a same-team peer manager
+  // covering the record's assigned manager (Peer Coverage deep-links).
+  const record = await prisma.allocationRecord.findUnique({
+    where: { id },
+    select: { id: true, employeeId: true, managerId: true },
+  });
+  if (!record) {
+    res.status(404).json({ error: 'Allocation not found' });
+    return;
+  }
+
+  const allowed =
+    (await canActOnEmployee(req.userId, req.userRoles, record.employeeId)) ||
+    (await canManageAllocation(req.userId, req.userRoles, record.managerId));
+  if (!allowed) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      entity: 'AllocationRecord',
+      entityId: id,
+      action: { in: Object.keys(ALLOCATION_TIMELINE_ACTIONS) },
+    },
+    include: { user: { select: USER_PUBLIC_SELECT } },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const events = logs.map((log) => {
+    // `feedback` is only present on a return payload; keep the comment null for
+    // every other action so the UI shows a bare event with no comment block.
+    const payload = (log.payload ?? {}) as Record<string, unknown>;
+    const comment =
+      typeof payload.feedback === 'string' && payload.feedback.trim()
+        ? payload.feedback.trim()
+        : null;
+
+    // Epic 3 — per-card flags captured on the return payload. Normalised to
+    // { card, comment } and defended against malformed/legacy rows (returns
+    // predating this change simply have no cardFlags → empty array).
+    const rawFlags = Array.isArray(payload.cardFlags) ? payload.cardFlags : [];
+    const flags = rawFlags
+      .map((f) => (f && typeof f === 'object' ? (f as Record<string, unknown>) : {}))
+      .map((f) => ({
+        card: typeof f.card === 'string' ? f.card : 'Flagged card',
+        comment: typeof f.comment === 'string' ? f.comment : '',
+      }))
+      .filter((f) => f.comment);
+
+    return {
+      id: log.id,
+      eventType: ALLOCATION_TIMELINE_ACTIONS[log.action],
+      action: log.action,
+      actor: log.user
+        ? { id: log.user.id, name: `${log.user.firstName} ${log.user.lastName}` }
+        : null,
+      comment,
+      flags,
+      createdAt: log.createdAt.toISOString(),
+    };
+  });
+
+  res.json(events);
 }
 
 export async function submit(req: AuthRequest, res: Response): Promise<void> {
@@ -660,6 +777,19 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
   });
   const actorName = `${actor.firstName} ${actor.lastName}`;
 
+  // Epic 3 — snapshot the per-card flags into the audit payload so the History
+  // timeline can show exactly which cards were flagged (and why), not just the
+  // top-level summary comment. Read off the record we already loaded with
+  // INCLUDE_FULL; each entry pairs a human label (workType · client) with the
+  // manager's reason, mirroring the labels the employee sees on the cards.
+  const cardFlags = record.activities
+    .filter((a) => a.flagReason)
+    .map((a) => ({
+      activityId: a.id,
+      card: [a.workType, a.client].filter(Boolean).join(' · ') || 'Flagged card',
+      comment: a.flagReason as string,
+    }));
+
   let updated;
   try {
     updated = await prisma.$transaction(async (tx) => {
@@ -688,6 +818,7 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
           fromStatus: record.status,
           toStatus: 'NeedsRevision',
           feedback: body.feedback ?? null,
+          cardFlags,
           actionedById: actor.id,
         },
       });
