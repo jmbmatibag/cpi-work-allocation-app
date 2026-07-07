@@ -180,3 +180,77 @@ describe('Allocation lifecycle', () => {
     expect(res.status).toBe(409);
   });
 });
+
+// Epic 3 — optimistic-concurrency guard on approve/return, plus the
+// accountability stamp (who ACTUALLY actioned the record). Uses its own
+// period ('June') so it doesn't collide with the lifecycle block's record
+// on the unique (employeeId, month, year) index.
+describe('Approve/return concurrency guard + accountability', () => {
+  let recordId: string;
+
+  beforeAll(async () => {
+    const create = await request(app)
+      .post('/api/allocations')
+      .set('Cookie', empCookie)
+      // Distinct activity id — AllocationActivity.id is a PK, so reusing the
+      // lifecycle record's 'test-act-001' would collide.
+      .send({
+        ...DRAFT_BODY,
+        month: 'June',
+        monthIndex: 5,
+        streams: [
+          {
+            ...DRAFT_BODY.streams[0],
+            activities: [
+              { ...DRAFT_BODY.streams[0].activities[0], id: 'test-act-june-001' },
+            ],
+          },
+        ],
+      });
+    if (!create.body?.id) {
+      throw new Error(
+        `setup: draft create failed (${create.status}): ${JSON.stringify(create.body)}`,
+      );
+    }
+    recordId = create.body.id;
+    const sub = await request(app)
+      .post(`/api/allocations/${recordId}/submit`)
+      .set('Cookie', empCookie);
+    if (sub.status !== 200) {
+      throw new Error(`setup: submit failed (${sub.status}): ${JSON.stringify(sub.body)}`);
+    }
+  });
+
+  it('409s when expectedStatus no longer matches (a peer got there first)', async () => {
+    const res = await request(app)
+      .post(`/api/allocations/${recordId}/approve`)
+      .set('Cookie', mgrCookie)
+      // The reviewer's page thinks it was returned, but it's actually still
+      // PendingReview — simulates acting on a stale view.
+      .send({ expectedStatus: 'NeedsRevision' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already actioned by another manager/i);
+  });
+
+  it('approves when expectedStatus matches and stamps the actor', async () => {
+    const res = await request(app)
+      .post(`/api/allocations/${recordId}/approve`)
+      .set('Cookie', mgrCookie)
+      .send({ expectedStatus: 'PendingReview' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('Approved');
+    // Accountability: the response carries who actually approved it.
+    expect(res.body.actionedBy?.userName).toBe(`${MGR.firstName} ${MGR.lastName}`);
+  });
+
+  it('409s a second approve now that the status has moved on', async () => {
+    const res = await request(app)
+      .post(`/api/allocations/${recordId}/approve`)
+      .set('Cookie', mgrCookie)
+      .send({ expectedStatus: 'PendingReview' });
+
+    expect(res.status).toBe(409);
+  });
+});

@@ -57,9 +57,29 @@ export declare const UpsertDraftSchema: z.ZodObject<{
         expanded: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
+export declare const AllocationStatusSchema: z.ZodEnum<{
+    Draft: "Draft";
+    PendingReview: "PendingReview";
+    Approved: "Approved";
+    NeedsRevision: "NeedsRevision";
+}>;
 export declare const ReturnForRevisionSchema: z.ZodObject<{
     feedback: z.ZodOptional<z.ZodString>;
+    expectedStatus: z.ZodOptional<z.ZodEnum<{
+        Draft: "Draft";
+        PendingReview: "PendingReview";
+        Approved: "Approved";
+        NeedsRevision: "NeedsRevision";
+    }>>;
 }, z.core.$strip>;
+export declare const ApproveAllocationSchema: z.ZodDefault<z.ZodObject<{
+    expectedStatus: z.ZodOptional<z.ZodEnum<{
+        Draft: "Draft";
+        PendingReview: "PendingReview";
+        Approved: "Approved";
+        NeedsRevision: "NeedsRevision";
+    }>>;
+}, z.core.$strip>>;
 export declare const SubmitAllocationSchema: z.ZodDefault<z.ZodObject<{
     streams: z.ZodOptional<z.ZodArray<z.ZodObject<{
         category: z.ZodString;
@@ -80,12 +100,6 @@ export declare const SubmitAllocationSchema: z.ZodDefault<z.ZodObject<{
 export declare const FlagActivitySchema: z.ZodObject<{
     reason: z.ZodString;
 }, z.core.$strip>;
-export declare const AllocationStatusSchema: z.ZodEnum<{
-    Draft: "Draft";
-    PendingReview: "PendingReview";
-    Approved: "Approved";
-    NeedsRevision: "NeedsRevision";
-}>;
 export declare const ListAllocationsQuerySchema: z.ZodObject<{
     employeeId: z.ZodOptional<z.ZodString>;
     managerId: z.ZodOptional<z.ZodString>;
@@ -120,6 +134,7 @@ export type ActivityData = z.infer<typeof ActivityDataSchema>;
 export type WorkStreamData = z.infer<typeof WorkStreamDataSchema>;
 export type UpsertDraftInput = z.infer<typeof UpsertDraftSchema>;
 export type ReturnForRevisionInput = z.infer<typeof ReturnForRevisionSchema>;
+export type ApproveAllocationInput = z.infer<typeof ApproveAllocationSchema>;
 export type SubmitAllocationInput = z.infer<typeof SubmitAllocationSchema>;
 export type FlagActivityInput = z.infer<typeof FlagActivitySchema>;
 export type ListAllocationsQuery = z.infer<typeof ListAllocationsQuerySchema>;

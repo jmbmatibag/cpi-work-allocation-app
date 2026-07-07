@@ -94,8 +94,17 @@ interface AllocationsContextType {
     year: string,
     streams?: WorkStreamData[],
   ) => Promise<string>;
-  approve: (recordId: string) => void;
-  returnForRevision: (recordId: string, feedback?: string) => void;
+  /**
+   * Approve a submission. Resolves on success; REJECTS on failure so the
+   * caller can surface it — notably the Peer Coverage 409 ("already actioned
+   * by another manager") when a peer beat this reviewer to it.
+   */
+  approve: (recordId: string) => Promise<void>;
+  /**
+   * Return a submission for revision. Resolves on success; rejects on
+   * failure (see {@link approve} for the concurrency-conflict case).
+   */
+  returnForRevision: (recordId: string, feedback?: string) => Promise<void>;
   getRecordsForManager: (managerId: string, team?: string) => AllocationRecord[];
   getApprovedForEmployee: (
     employeeId: string,
@@ -654,7 +663,7 @@ const LocalAllocationsProvider = ({ children }: { children: ReactNode }) => {
     [],
   );
 
-  const approve = useCallback((recordId: string) => {
+  const approve = useCallback(async (recordId: string) => {
     setRecords((prev) => {
       const record = prev.find((r) => r.id === recordId);
       if (record?.flags && Object.keys(record.flags).length > 0) {
@@ -673,7 +682,7 @@ const LocalAllocationsProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const returnForRevision = useCallback(
-    (recordId: string, feedback?: string) => {
+    async (recordId: string, feedback?: string) => {
       setRecords((prev) => {
         const record = prev.find((r) => r.id === recordId);
         if (record && (!record.flags || Object.keys(record.flags).length === 0)) {
@@ -934,6 +943,17 @@ const STATUS_MAP: Record<string, AllocationStatus> = {
   NeedsRevision:  "Needs Revision",
 };
 
+// Domain (spaced) → wire (enum) status. Inverse of STATUS_MAP; used to send
+// the optimistic-concurrency `expectedStatus` token back to the API on
+// approve/return so the backend can detect a peer racing the same record.
+type WireStatus = "Draft" | "PendingReview" | "Approved" | "NeedsRevision";
+const TO_WIRE_STATUS: Record<AllocationStatus, WireStatus> = {
+  Draft:             "Draft",
+  "Pending Review":  "PendingReview",
+  Approved:          "Approved",
+  "Needs Revision":  "NeedsRevision",
+};
+
 // Exported so the Peer Coverage hooks can reuse the exact same wire→domain
 // mapping when they fetch a peer manager's submissions directly.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -996,14 +1016,24 @@ const ApiAllocationsProvider = ({ children }: { children: ReactNode }) => {
   });
 
   const approveMut = useMutation({
-    mutationFn: (id: string) => api.allocations.approve(id),
-    onSuccess: inv,
+    mutationFn: ({ id, expectedStatus }: { id: string; expectedStatus?: WireStatus }) =>
+      api.allocations.approve(id, expectedStatus),
+    // onSettled (not just onSuccess): a 409 conflict means someone else moved
+    // the record, so we must refetch to show its real current state too.
+    onSettled: inv,
   });
 
   const returnMut = useMutation({
-    mutationFn: ({ id, feedback }: { id: string; feedback?: string }) =>
-      api.allocations.returnForRevision(id, feedback),
-    onSuccess: inv,
+    mutationFn: ({
+      id,
+      feedback,
+      expectedStatus,
+    }: {
+      id: string;
+      feedback?: string;
+      expectedStatus?: WireStatus;
+    }) => api.allocations.returnForRevision(id, feedback, expectedStatus),
+    onSettled: inv,
   });
 
   const flagMut = useMutation({
@@ -1091,15 +1121,29 @@ const ApiAllocationsProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const approve = useCallback(
-    (recordId: string) => { approveMut.mutate(recordId); },
-    [approveMut],
+    async (recordId: string) => {
+      // Snapshot the status the reviewer is acting on so the backend can
+      // detect a peer racing the same record. mutateAsync so a 409 rejects
+      // out to the caller (TeamHub) for a specific error toast.
+      const current = records.find((r) => r.id === recordId)?.status;
+      await approveMut.mutateAsync({
+        id: recordId,
+        expectedStatus: current ? TO_WIRE_STATUS[current] : undefined,
+      });
+    },
+    [approveMut, records],
   );
 
   const returnForRevision = useCallback(
-    (recordId: string, feedback?: string) => {
-      returnMut.mutate({ id: recordId, feedback });
+    async (recordId: string, feedback?: string) => {
+      const current = records.find((r) => r.id === recordId)?.status;
+      await returnMut.mutateAsync({
+        id: recordId,
+        feedback,
+        expectedStatus: current ? TO_WIRE_STATUS[current] : undefined,
+      });
     },
-    [returnMut],
+    [returnMut, records],
   );
 
   const getRecordsForManager = useCallback(

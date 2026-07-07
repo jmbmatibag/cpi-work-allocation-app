@@ -99,10 +99,28 @@ import {
   FileEdit,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ApiError } from "@/lib/apiClient";
 import { TablePagination } from "@/components/ui/TablePagination";
 import { TeamAnalytics } from "./TeamAnalytics";
 
 const ALL_MONTHS = "all";
+
+// Pull a human-readable message off a failed allocation action. The backend
+// returns a specific body (e.g. the Peer Coverage concurrency 409, "This
+// allocation was already actioned by another manager.") which we surface
+// verbatim; anything else falls back to a generic line.
+function actionErrorMessage(err: unknown, fallback: string): string {
+  if (
+    err instanceof ApiError &&
+    err.body &&
+    typeof err.body === "object" &&
+    "error" in err.body &&
+    typeof (err.body as { error: unknown }).error === "string"
+  ) {
+    return (err.body as { error: string }).error;
+  }
+  return fallback;
+}
 
 const MONTHS = [
   "January", "February", "March", "April",
@@ -1580,7 +1598,7 @@ const SubmissionsPanel = ({
     });
   };
 
-  const handleApprove = () => {
+  const handleApprove = async () => {
     if (!selected || !currentUser) return;
 
     if (isEditing && editedStreams) {
@@ -1601,7 +1619,20 @@ const SubmissionsPanel = ({
       return;
     }
 
-    approve(selected.id);
+    // Await so a Peer Coverage concurrency conflict (409) surfaces as a real
+    // error instead of an optimistic "approved" toast the backend rejected.
+    try {
+      await approve(selected.id);
+    } catch (err) {
+      toast.error("Couldn't approve this allocation.", {
+        description: actionErrorMessage(
+          err,
+          "Something went wrong. The list has been refreshed — please retry.",
+        ),
+      });
+      return;
+    }
+
     toast.success("Allocation approved", {
       description: `${selected.employeeName} — ${selected.month} ${selected.year}`,
     });
@@ -1636,10 +1667,25 @@ const SubmissionsPanel = ({
     setReturnConfirmOpen(true);
   };
 
-  const handleReturn = () => {
+  const handleReturn = async () => {
     if (!selected) return;
     const reason = summaryFeedback.trim();
-    returnForRevision(selected.id, reason || undefined);
+
+    // Await so a concurrency conflict (409) surfaces instead of a false
+    // "returned" toast; keep the confirm dialog open on failure so the
+    // reviewer's typed summary isn't lost.
+    try {
+      await returnForRevision(selected.id, reason || undefined);
+    } catch (err) {
+      toast.error("Couldn't return this allocation.", {
+        description: actionErrorMessage(
+          err,
+          "Something went wrong. The list has been refreshed — please retry.",
+        ),
+      });
+      return;
+    }
+
     toast.success("Returned for revision", {
       description: `${selected.employeeName} will see your changes and can revise.`,
     });

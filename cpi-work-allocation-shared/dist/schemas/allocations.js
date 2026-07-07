@@ -35,9 +35,29 @@ export const UpsertDraftSchema = z.object({
     monthIndex: z.number().int().min(0).max(11),
     streams: z.array(WorkStreamDataSchema),
 });
+export const AllocationStatusSchema = z.enum([
+    'Draft',
+    'PendingReview',
+    'Approved',
+    'NeedsRevision',
+]);
 export const ReturnForRevisionSchema = z.object({
     feedback: z.string().optional(),
+    // Optimistic-concurrency token (Peer Coverage). The status the client
+    // believed the record was in when the review page loaded. When present,
+    // the backend refuses the action if the record has since moved to a
+    // different status — i.e. another manager (direct or peer) already
+    // actioned it — and returns 409 instead of silently clobbering their work.
+    expectedStatus: AllocationStatusSchema.optional(),
 });
+// Approve carries no data of its own beyond the optional concurrency token,
+// so the whole body is optional (`.default({})` lets clients POST with no
+// body at all — Express 5 leaves req.body undefined in that case).
+export const ApproveAllocationSchema = z
+    .object({
+    expectedStatus: AllocationStatusSchema.optional(),
+})
+    .default({});
 // Optional streams on submit so the client can commit the final card
 // state in the same transaction as the Draft→PendingReview status flip.
 // Prevents the "submit succeeds, status flips, but the last unsaved
@@ -52,12 +72,6 @@ export const SubmitAllocationSchema = z
 export const FlagActivitySchema = z.object({
     reason: z.string().min(1),
 });
-export const AllocationStatusSchema = z.enum([
-    'Draft',
-    'PendingReview',
-    'Approved',
-    'NeedsRevision',
-]);
 export const ListAllocationsQuerySchema = z.object({
     employeeId: z.string().min(1).optional(),
     managerId: z.string().min(1).optional(),

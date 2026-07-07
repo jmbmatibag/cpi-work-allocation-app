@@ -473,11 +473,24 @@ const allocations = {
       streams ? { streams } : {},
     ),
 
-  approve: (id: string) =>
-    post<ApiAllocationRecord>(`/api/allocations/${encodeURIComponent(id)}/approve`),
+  // `expectedStatus` is the wire status the reviewer saw when the page
+  // loaded. The backend rejects the action with 409 if the record has since
+  // changed (another manager actioned it first — Peer Coverage race guard).
+  approve: (id: string, expectedStatus?: ApiAllocationRecord['status']) =>
+    post<ApiAllocationRecord>(
+      `/api/allocations/${encodeURIComponent(id)}/approve`,
+      expectedStatus ? { expectedStatus } : {},
+    ),
 
-  returnForRevision: (id: string, feedback?: string) =>
-    post<ApiAllocationRecord>(`/api/allocations/${encodeURIComponent(id)}/return`, { feedback }),
+  returnForRevision: (
+    id: string,
+    feedback?: string,
+    expectedStatus?: ApiAllocationRecord['status'],
+  ) =>
+    post<ApiAllocationRecord>(`/api/allocations/${encodeURIComponent(id)}/return`, {
+      feedback,
+      ...(expectedStatus ? { expectedStatus } : {}),
+    }),
 
   managerEdit: (id: string, streams: ApiWorkStream[], clearFlags?: boolean) =>
     post<ApiAllocationRecord>(`/api/allocations/${encodeURIComponent(id)}/manager-edit`, {

@@ -4,6 +4,7 @@ import { validate } from '../middleware/validate.js';
 import {
   UpsertDraftSchema,
   ReturnForRevisionSchema,
+  ApproveAllocationSchema,
   SubmitAllocationSchema,
   FlagActivitySchema,
   ManagerEditSchema,
@@ -32,6 +33,7 @@ router.post(
   '/:id/approve',
   managerOrAbove,
   validate(IdParamSchema, 'params'),
+  validate(ApproveAllocationSchema),
   ctrl.approve
 );
 router.post(

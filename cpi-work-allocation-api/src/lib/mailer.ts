@@ -170,10 +170,15 @@ export function buildApprovalEmailHtml(
   employeeName: string,
   month: string,
   year: string,
+  // Who actually approved it. Under Peer Coverage this may be a covering
+  // peer rather than the employee's direct manager, so it's injected
+  // explicitly rather than assumed. Optional for backward compatibility.
+  reviewerName?: string | null,
 ): string {
+  const byReviewer = reviewerName ? ` by <strong>${reviewerName}</strong>` : '';
   return notificationHtml(
     'Your Allocation Has Been Approved',
-    `Your work allocation for <strong>${month} ${year}</strong> has been reviewed and approved. No further action is required.`,
+    `Your work allocation for <strong>${month} ${year}</strong> has been reviewed and approved${byReviewer}. No further action is required.`,
     'success',
     allocationDeepLink(month, year),
     'View Allocation →',
@@ -184,8 +189,10 @@ export function buildApprovalEmailText(
   employeeName: string,
   month: string,
   year: string,
+  reviewerName?: string | null,
 ): string {
-  return `Hi ${employeeName},\n\nYour work allocation for ${month} ${year} has been approved.\n\nView it at: ${allocationDeepLink(month, year)}`;
+  const byReviewer = reviewerName ? ` by ${reviewerName}` : '';
+  return `Hi ${employeeName},\n\nYour work allocation for ${month} ${year} has been approved${byReviewer}.\n\nView it at: ${allocationDeepLink(month, year)}`;
 }
 
 export function buildRevisionEmailHtml(
@@ -193,13 +200,17 @@ export function buildRevisionEmailHtml(
   month: string,
   year: string,
   feedback?: string | null,
+  // Who actually returned it (may be a covering peer under Peer Coverage).
+  reviewerName?: string | null,
 ): string {
+  const noteLabel = reviewerName ? `Note from ${reviewerName}` : 'Reviewer note';
   const feedbackBlock = feedback
-    ? `<p style="margin:12px 0 0;padding:12px;background:#FEF9C3;border-left:3px solid #EAB308;border-radius:3px;font-size:13px;color:#374151;line-height:1.5;"><strong>Reviewer note:</strong> ${feedback}</p>`
+    ? `<p style="margin:12px 0 0;padding:12px;background:#FEF9C3;border-left:3px solid #EAB308;border-radius:3px;font-size:13px;color:#374151;line-height:1.5;"><strong>${noteLabel}:</strong> ${feedback}</p>`
     : '';
+  const byReviewer = reviewerName ? ` by <strong>${reviewerName}</strong>` : '';
   return notificationHtml(
     'Your Allocation Needs Revision',
-    `Your work allocation for <strong>${month} ${year}</strong> has been returned for revision. Please review the feedback below and resubmit when ready.${feedbackBlock}`,
+    `Your work allocation for <strong>${month} ${year}</strong> has been returned for revision${byReviewer}. Please review the feedback below and resubmit when ready.${feedbackBlock}`,
     'error',
     allocationDeepLink(month, year),
     'Update Allocation →',
@@ -211,9 +222,12 @@ export function buildRevisionEmailText(
   month: string,
   year: string,
   feedback?: string | null,
+  reviewerName?: string | null,
 ): string {
-  const feedbackLine = feedback ? `\n\nReviewer note: ${feedback}` : '';
-  return `Hi ${employeeName},\n\nYour work allocation for ${month} ${year} has been returned for revision.${feedbackLine}\n\nUpdate it at: ${allocationDeepLink(month, year)}`;
+  const noteLabel = reviewerName ? `Note from ${reviewerName}` : 'Reviewer note';
+  const feedbackLine = feedback ? `\n\n${noteLabel}: ${feedback}` : '';
+  const byReviewer = reviewerName ? ` by ${reviewerName}` : '';
+  return `Hi ${employeeName},\n\nYour work allocation for ${month} ${year} has been returned for revision${byReviewer}.${feedbackLine}\n\nUpdate it at: ${allocationDeepLink(month, year)}`;
 }
 
 export function buildSubmissionReminderEmailHtml(

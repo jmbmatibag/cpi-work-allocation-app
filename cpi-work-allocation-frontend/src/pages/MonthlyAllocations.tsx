@@ -93,6 +93,31 @@ const MonthlyAllocations = () => {
     [existingRecord],
   );
 
+  // Reviewer who actually returned this record (Peer Coverage: may be a peer
+  // manager, not the employee's direct manager). Surfaced so the revision
+  // callout can attribute the feedback instead of a generic "Manager".
+  const reviewerName = existingRecord?.actionedBy?.userName?.trim() || "";
+
+  // Per-flag details for the revision callout: pair each flagged activity's
+  // reason with a human label (work type · client) resolved from the record's
+  // own streams, so the employee sees the exact text left on each card rather
+  // than just a count. Falls back to a generic label if the activity was
+  // removed since it was flagged.
+  const flagDetails = useMemo(() => {
+    if (!existingRecord?.flags) return [];
+    const byId = new Map<string, { workType?: string; client?: string }>();
+    for (const s of existingRecord.streams) {
+      for (const a of s.activities) byId.set(a.id, a);
+    }
+    return Object.entries(existingRecord.flags).map(([id, flag]) => {
+      const act = byId.get(id);
+      const label = act
+        ? [act.workType, act.client].filter(Boolean).join(" · ") || "Flagged card"
+        : "Flagged card";
+      return { id, label, reason: flag.reason };
+    });
+  }, [existingRecord]);
+
   // Track which record id we last hydrated streams from. A ref, not
   // state, because it's bookkeeping — mutating it shouldn't trigger
   // a re-render.
@@ -303,22 +328,56 @@ const MonthlyAllocations = () => {
         )}
 
         {status === "Needs Revision" && (
-          <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 space-y-2">
+          <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 space-y-3">
             <div className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="h-4 w-4" />
+              <AlertTriangle className="h-4 w-4 shrink-0" />
               <p className="font-semibold text-sm">
-                Manager requested revisions
+                {reviewerName
+                  ? `Revision requested by ${reviewerName}`
+                  : "Manager requested revisions"}
               </p>
             </div>
+
+            {/* Summary comment left on the whole submission. */}
             {existingRecord?.feedback && (
-              <p className="text-xs text-foreground/80 leading-relaxed">
-                {existingRecord.feedback}
+              <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-line">
+                {reviewerName ? `${reviewerName}: ` : ""}
+                &ldquo;{existingRecord.feedback}&rdquo;
               </p>
             )}
-            {flagCount > 0 && (
-              <p className="text-xs text-foreground/80 flex items-center gap-1.5">
-                <Flag className="h-3 w-3" />
-                {flagCount} {flagCount === 1 ? "card is" : "cards are"} flagged — see orange highlights in the workspace.
+
+            {/* Per-card flags with the exact reason left on each — no longer a
+                bare count. Each maps to an orange-highlighted card below. */}
+            {flagDetails.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-foreground/70 flex items-center gap-1.5">
+                  <Flag className="h-3 w-3 shrink-0" />
+                  {flagDetails.length}{" "}
+                  {flagDetails.length === 1 ? "card needs" : "cards need"} changes:
+                </p>
+                <ul className="space-y-1.5">
+                  {flagDetails.map((f) => (
+                    <li
+                      key={f.id}
+                      className="text-xs text-foreground/80 rounded-md bg-destructive/5 border border-destructive/15 px-2.5 py-1.5"
+                    >
+                      <span className="font-medium text-foreground">
+                        {f.label}
+                      </span>
+                      <span className="text-foreground/70">
+                        {" — "}
+                        {f.reason}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {!existingRecord?.feedback && flagDetails.length === 0 && (
+              <p className="text-xs text-foreground/70 leading-relaxed">
+                No specific notes were left. Review your entries and resubmit
+                when ready.
               </p>
             )}
           </div>

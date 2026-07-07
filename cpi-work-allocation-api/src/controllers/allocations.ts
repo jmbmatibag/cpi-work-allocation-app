@@ -6,6 +6,7 @@ import { getValid } from '../middleware/validate.js';
 import {
   UpsertDraftSchema,
   ReturnForRevisionSchema,
+  ApproveAllocationSchema,
   SubmitAllocationSchema,
   FlagActivitySchema,
   ManagerEditSchema,
@@ -56,6 +57,21 @@ function generateAllocationId(year: string): string {
   const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
   return `ALC-${year}-${suffix}`;
 }
+
+// Peer Coverage — the message returned when an approve/return loses the
+// optimistic-concurrency check (another manager actioned the record first).
+const CONCURRENT_ACTION_MESSAGE =
+  'This allocation was already actioned by another manager.';
+
+/**
+ * Thrown inside the approve/return transaction when the guarded
+ * `updateMany` matches zero rows — i.e. the record's status changed out
+ * from under the caller between their page load and their click (a peer or
+ * the direct manager got there first). Caught by the controller and mapped
+ * to a 409 so the loser sees {@link CONCURRENT_ACTION_MESSAGE} instead of
+ * silently overwriting the winner's decision.
+ */
+class ConcurrentActionError extends Error {}
 
 export async function upsertDraft(req: AuthRequest, res: Response): Promise<void> {
   const d = getValid(req, UpsertDraftSchema);
@@ -197,7 +213,15 @@ export async function getOne(req: AuthRequest, res: Response): Promise<void> {
     return;
   }
 
-  const allowed = await canActOnEmployee(req.userId, req.userRoles, record.employeeId);
+  // Peer Coverage: the detail fetch must not be gated on the DIRECT
+  // manager relationship. A caller may read this record if they can act on
+  // the employee (self / direct manager / global) OR if they are a same-team
+  // peer manager covering the record's assigned manager — the same authority
+  // that lets them flag / return / approve it. Without the peer branch a
+  // covering manager who deep-links to a submission gets a spurious 403.
+  const allowed =
+    (await canActOnEmployee(req.userId, req.userRoles, record.employeeId)) ||
+    (await canManageAllocation(req.userId, req.userRoles, record.managerId));
   if (!allowed) {
     res.status(403).json({ error: 'Forbidden' });
     return;
@@ -476,6 +500,7 @@ async function notifyFinanceIfTeamComplete(
 
 export async function approve(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, IdParamSchema, 'params');
+  const body = getValid(req, ApproveAllocationSchema);
 
   const record = await prisma.allocationRecord.findUnique({
     where: { id },
@@ -488,6 +513,14 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
 
   if (!(await canManageAllocation(req.userId, req.userRoles, record.managerId))) {
     res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+
+  // Peer Coverage concurrency guard (fast path). If the client told us the
+  // status it saw and the record has since moved on, another manager already
+  // actioned it — bail before doing any work.
+  if (body.expectedStatus && record.status !== body.expectedStatus) {
+    res.status(409).json({ error: CONCURRENT_ACTION_MESSAGE });
     return;
   }
 
@@ -504,28 +537,48 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
   });
   const actorName = `${actor.firstName} ${actor.lastName}`;
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const u = await tx.allocationRecord.update({
-      where: { id: record.id },
-      data: {
-        status: 'Approved',
-        reviewedAt: new Date(),
-        feedback: null,
-        actionedById: actor.id,
-        actionedByName: actorName,
-        actionedAt: new Date(),
-      },
-      include: INCLUDE_FULL,
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      // Concurrency guard (authoritative path). Scope the write to the
+      // expected status so two managers clicking "Approve" at the same
+      // instant can't both win: whoever commits first flips the status, and
+      // the loser's updateMany matches zero rows. `updateMany` (not `update`)
+      // because `update` throws on a where-miss with a status predicate;
+      // count-zero lets us translate cleanly to a 409.
+      const guard = body.expectedStatus ? { status: body.expectedStatus } : {};
+      const result = await tx.allocationRecord.updateMany({
+        where: { id: record.id, ...guard },
+        data: {
+          status: 'Approved',
+          reviewedAt: new Date(),
+          feedback: null,
+          actionedById: actor.id,
+          actionedByName: actorName,
+          actionedAt: new Date(),
+        },
+      });
+      if (result.count === 0) throw new ConcurrentActionError();
+
+      await logAuditTx(tx, {
+        userId: req.userId!,
+        action: 'approve',
+        entity: 'AllocationRecord',
+        entityId: record.id,
+        payload: { fromStatus: record.status, toStatus: 'Approved', actionedById: actor.id },
+      });
+      return tx.allocationRecord.findUniqueOrThrow({
+        where: { id: record.id },
+        include: INCLUDE_FULL,
+      });
     });
-    await logAuditTx(tx, {
-      userId: req.userId!,
-      action: 'approve',
-      entity: 'AllocationRecord',
-      entityId: record.id,
-      payload: { fromStatus: record.status, toStatus: 'Approved', actionedById: actor.id },
-    });
-    return u;
-  });
+  } catch (err) {
+    if (err instanceof ConcurrentActionError) {
+      res.status(409).json({ error: CONCURRENT_ACTION_MESSAGE });
+      return;
+    }
+    throw err;
+  }
 
   res.json(toFrontendRecord(updated));
 
@@ -538,14 +591,16 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
     actionUrl: '/allocations',
   });
 
-  // Notify the employee that their allocation was approved.
+  // Notify the employee that their allocation was approved. The actor name
+  // (who ACTUALLY clicked Approve) is injected so a peer-covered approval
+  // reads "approved by <peer>" rather than implying the direct manager did it.
   if (updated.employee?.email) {
     const employeeName = `${updated.employee.firstName} ${updated.employee.lastName}`;
     sendNotificationEmail(
       updated.employee.email,
       `[CPI Allocation] Your ${updated.month} ${updated.year} allocation has been approved`,
-      buildApprovalEmailHtml(employeeName, updated.month, updated.year),
-      buildApprovalEmailText(employeeName, updated.month, updated.year),
+      buildApprovalEmailHtml(employeeName, updated.month, updated.year, actorName),
+      buildApprovalEmailText(employeeName, updated.month, updated.year, actorName),
     ).catch((err) => {
       console.warn(
         `[mailer] approval notification to ${updated.employee.email} failed:`,
@@ -592,6 +647,12 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
     return;
   }
 
+  // Peer Coverage concurrency guard (fast path) — see approve() for rationale.
+  if (body.expectedStatus && record.status !== body.expectedStatus) {
+    res.status(409).json({ error: CONCURRENT_ACTION_MESSAGE });
+    return;
+  }
+
   // Peer Coverage accountability — stamp the user who ACTUALLY returned it.
   const actor = await prisma.user.findUniqueOrThrow({
     where: { id: req.userId! },
@@ -599,33 +660,49 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
   });
   const actorName = `${actor.firstName} ${actor.lastName}`;
 
-  const updated = await prisma.$transaction(async (tx) => {
-    const u = await tx.allocationRecord.update({
-      where: { id: record.id },
-      data: {
-        status: 'NeedsRevision',
-        reviewedAt: new Date(),
-        feedback: body.feedback ?? null,
-        actionedById: actor.id,
-        actionedByName: actorName,
-        actionedAt: new Date(),
-      },
-      include: INCLUDE_FULL,
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      // Concurrency guard (authoritative path) — scope the write to the
+      // expected status so a simultaneous approve/return can't both land.
+      const guard = body.expectedStatus ? { status: body.expectedStatus } : {};
+      const result = await tx.allocationRecord.updateMany({
+        where: { id: record.id, ...guard },
+        data: {
+          status: 'NeedsRevision',
+          reviewedAt: new Date(),
+          feedback: body.feedback ?? null,
+          actionedById: actor.id,
+          actionedByName: actorName,
+          actionedAt: new Date(),
+        },
+      });
+      if (result.count === 0) throw new ConcurrentActionError();
+
+      await logAuditTx(tx, {
+        userId: req.userId!,
+        action: 'return',
+        entity: 'AllocationRecord',
+        entityId: record.id,
+        payload: {
+          fromStatus: record.status,
+          toStatus: 'NeedsRevision',
+          feedback: body.feedback ?? null,
+          actionedById: actor.id,
+        },
+      });
+      return tx.allocationRecord.findUniqueOrThrow({
+        where: { id: record.id },
+        include: INCLUDE_FULL,
+      });
     });
-    await logAuditTx(tx, {
-      userId: req.userId!,
-      action: 'return',
-      entity: 'AllocationRecord',
-      entityId: record.id,
-      payload: {
-        fromStatus: record.status,
-        toStatus: 'NeedsRevision',
-        feedback: body.feedback ?? null,
-        actionedById: actor.id,
-      },
-    });
-    return u;
-  });
+  } catch (err) {
+    if (err instanceof ConcurrentActionError) {
+      res.status(409).json({ error: CONCURRENT_ACTION_MESSAGE });
+      return;
+    }
+    throw err;
+  }
 
   res.json(toFrontendRecord(updated));
 
@@ -640,14 +717,16 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
     actionUrl: '/allocations',
   });
 
-  // Notify the employee that their allocation needs revision.
+  // Notify the employee that their allocation needs revision. The actor name
+  // (who ACTUALLY returned it) is injected so the notice names the reviewing
+  // peer rather than implying the direct manager sent it back.
   if (updated.employee?.email) {
     const employeeName = `${updated.employee.firstName} ${updated.employee.lastName}`;
     sendNotificationEmail(
       updated.employee.email,
       `[CPI Allocation] Your ${updated.month} ${updated.year} allocation needs revision`,
-      buildRevisionEmailHtml(employeeName, updated.month, updated.year, body.feedback),
-      buildRevisionEmailText(employeeName, updated.month, updated.year, body.feedback),
+      buildRevisionEmailHtml(employeeName, updated.month, updated.year, body.feedback, actorName),
+      buildRevisionEmailText(employeeName, updated.month, updated.year, body.feedback, actorName),
     ).catch((err) => {
       console.warn(
         `[mailer] revision notification to ${updated.employee.email} failed:`,
