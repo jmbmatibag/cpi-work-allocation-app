@@ -752,6 +752,42 @@ function preprocessMultiWordTags(
 }
 
 /**
+ * Restrict a project's fan-out client list to OFFICIAL clients only.
+ *
+ * Scenario A/E fan-out spreads one #SubCategory entry across "all clients"
+ * assigned to that project. The candidate list comes from the sub-category's
+ * saved assignments (`clientsBySubCategory`), which can be polluted by two
+ * kinds of non-official, frontend-only artifacts:
+ *
+ *   1. A value literally carrying the "(custom)" suffix — the label the
+ *      Workspace / Team Hub client dropdown renders for any card client that
+ *      isn't in the master roster (see Workspace.tsx). This is a pure UI
+ *      artifact and must never spawn its own auto-generated card.
+ *   2. An ad-hoc client name that was typed on a card but never registered
+ *      in Admin Settings — i.e. it is absent from the master `knownClients`
+ *      roster (the authoritative "is this an official, DB-registered
+ *      client?" test).
+ *
+ * A candidate survives only if it clears BOTH guards. Excluding these here
+ * also keeps the percentage math correct: callers divide the block % by the
+ * length of the RETURNED array, so removing a bogus client no longer steals a
+ * slice of the allocation (Epic 2).
+ */
+export function filterOfficialClients(
+  candidates: readonly string[],
+  knownClients: readonly string[],
+): string[] {
+  // Case-insensitive membership set of the master (official) client roster.
+  const officialRoster = new Set(knownClients.map((c) => c.toLowerCase()));
+  return candidates.filter((name) => {
+    // Guard 1: drop any residual "(custom)" UI artifact defensively.
+    if (name.toLowerCase().includes("(custom)")) return false;
+    // Guard 2: keep only clients that are officially registered.
+    return officialRoster.has(name.toLowerCase());
+  });
+}
+
+/**
  * Parse a work-summary text into structured ParsedTask entries.
  *
  * Returns [] if no lines parse. Preserves the order tasks appear in
@@ -945,8 +981,14 @@ export function parseWorkAllocation(
           resolved?.subCategory &&
           taxonomy?.clientsBySubCategory
         ) {
-          const projectClients =
-            taxonomy.clientsBySubCategory[resolved.subCategory] ?? [];
+          // Fan out ONLY across official, registered clients — never the
+          // "(custom)" frontend artifacts that can leak into the assignment
+          // list. The divisor below is the filtered length so the split still
+          // sums to blockPercentage (Epic 1 + Epic 2).
+          const projectClients = filterOfficialClients(
+            taxonomy.clientsBySubCategory[resolved.subCategory] ?? [],
+            knownClients,
+          );
           if (projectClients.length > 0) {
             const splitPct = blockPercentage / projectClients.length;
             for (const pc of projectClients) {
@@ -1101,8 +1143,14 @@ export function parseWorkAllocation(
         resolved?.subCategory &&
         taxonomy?.clientsBySubCategory
       ) {
-        const projectClients =
-          taxonomy.clientsBySubCategory[resolved.subCategory] ?? [];
+        // Fan out ONLY across official, registered clients — never the
+        // "(custom)" frontend artifacts that can leak into the assignment
+        // list. The divisor below is the filtered length so the split still
+        // sums to the line percentage (Epic 1 + Epic 2).
+        const projectClients = filterOfficialClients(
+          taxonomy.clientsBySubCategory[resolved.subCategory] ?? [],
+          knownClients,
+        );
         if (projectClients.length > 0) {
           const splitPct = percentage / projectClients.length;
           for (const pc of projectClients) {

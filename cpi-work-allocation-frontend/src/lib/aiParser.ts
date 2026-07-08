@@ -30,7 +30,11 @@
  */
 
 import type { ParsedTask, TaxonomySnapshot, InferenceRule } from "@/lib/promptParser";
-import { parseWorkAllocation, LEGACY_TAG_HINTS } from "@/lib/promptParser";
+import {
+  parseWorkAllocation,
+  LEGACY_TAG_HINTS,
+  filterOfficialClients,
+} from "@/lib/promptParser";
 import type { SubCategory, WorkType } from "@/contexts/ClientsConfigContext";
 
 // ---------------------------------------------------------------------
@@ -382,11 +386,15 @@ function detectDynamicScenario(
   // (not divided). Total hours = hoursValue × numberOfClients.
   if (EACH_CLIENT_RE.test(line) && hoursValues.length === 1) {
     const subInfo = lookupSubCategoryInfo(tagName, opts);
-    if (!subInfo || subInfo.clients.length === 0) return null;
+    if (!subInfo) return null;
+    // Fan out across OFFICIAL clients only — exclude "(custom)" artifacts and
+    // any unregistered ad-hoc name from the sub-category assignment list.
+    const officialClients = filterOfficialClients(subInfo.clients, opts.knownClients);
+    if (officialClients.length === 0) return null;
     const hoursEach = hoursValues[0].value;
     return {
       tagName,
-      clientHours: subInfo.clients.map((c) => ({ client: c, hours: hoursEach })),
+      clientHours: officialClients.map((c) => ({ client: c, hours: hoursEach })),
     };
   }
 
@@ -420,12 +428,16 @@ function detectDynamicScenario(
   // total hours equally. Exact decimal — no rounding at this stage.
   if (clients.length === 0 && hoursValues.length === 1) {
     const subInfo = lookupSubCategoryInfo(tagName, opts);
-    if (!subInfo || subInfo.clients.length === 0) return null;
+    if (!subInfo) return null;
+    // Fan out across OFFICIAL clients only — exclude "(custom)" artifacts and
+    // any unregistered ad-hoc name so the equal division uses a clean divisor.
+    const officialClients = filterOfficialClients(subInfo.clients, opts.knownClients);
+    if (officialClients.length === 0) return null;
     const totalHours = hoursValues[0].value;
-    const hoursEach = totalHours / subInfo.clients.length; // exact decimal
+    const hoursEach = totalHours / officialClients.length; // exact decimal, filtered divisor
     return {
       tagName,
-      clientHours: subInfo.clients.map((c) => ({ client: c, hours: hoursEach })),
+      clientHours: officialClients.map((c) => ({ client: c, hours: hoursEach })),
     };
   }
 
@@ -857,9 +869,16 @@ function mergeClassifications(
     // split the percentage equally across them — e.g. "#Project1 support -
     // 100%" with Project1 = [C1, C2] → two cards at 50% each. Mirrors the
     // rule parser's Scenario A so both parse paths behave identically.
+    // Fan out ONLY across official, registered clients — strip any
+    // "(custom)" frontend artifact or unregistered ad-hoc name that leaked
+    // into the sub-category's assignment list. `percentageEach` below divides
+    // by this filtered length, so the split still sums correctly (Epic 1 + 2).
     const projectClients =
       resolvedBulletClients.length === 0 && c.subCategory
-        ? opts.taxonomy.clientsBySubCategory?.[c.subCategory] ?? []
+        ? filterOfficialClients(
+            opts.taxonomy.clientsBySubCategory?.[c.subCategory] ?? [],
+            opts.knownClients,
+          )
         : [];
 
     const clients =

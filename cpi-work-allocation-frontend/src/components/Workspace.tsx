@@ -22,6 +22,7 @@ import {
 import { useAIConfig } from "@/contexts/AIConfigContext";
 import type { ActivityFlag } from "@/contexts/AllocationsContext";
 import { buildHighlightRegex, renderTagged } from "@/lib/tagHighlight";
+import { isLeaveOrHolidayLog, inferOthersWorkType } from "@/lib/leaveClassification";
 
 // Normalize a stored description for display or storage.
 //
@@ -136,44 +137,54 @@ function deriveCardHeader(
   };
 }
 
-// ── Leave / Holiday intercept (Epic 1) ─────────────────────────────────────
-// When a task description mentions a time-off keyword, force it into the
-// General Work → Others bucket and derive the Work Type from the specific
-// keyword ("sick leave" → "Sick Leave", "holiday" → "Holiday"). This is a
-// deterministic override applied after parsing, so it works identically for
-// the rule parser, the AI parser, and the dynamic hour parser.
+// ── Leave / Holiday intercept ───────────────────────────────────────────────
+// A time-off log ("on Leave", "Sick leave for today", "holiday") is not a real
+// work category — CPI files it under General Work → OTHERS. When we detect the
+// intent we (Epic 1) force the card into General Work / OTHERS, then (Epic 2)
+// infer the specific Work Type from the description against the OTHERS scope's
+// real options. Both steps resolve names against the LIVE taxonomy (which is
+// ahead of the local seed and may differ in casing) so we never emit a value
+// the dropdowns can't match — that mismatch (e.g. "Others" vs "OTHERS") is
+// exactly what previously rendered both the Sub Category and Work Type
+// dropdowns blank. The override is applied after parsing, so it behaves
+// identically for the rule parser, the AI parser, and the dynamic hour parser.
 //
-// Ordered specific-first: multi-word forms ("sick leave") must be tested
-// before the bare "leave" fallback, otherwise everything collapses to "Leave".
-const LEAVE_WORKTYPES: readonly { re: RegExp; workType: string }[] = [
-  { re: /\bsick\s+leave\b/i, workType: "Sick Leave" },
-  { re: /\b(?:vacation|annual)\s+leave\b/i, workType: "Vacation Leave" },
-  { re: /\bmaternity\s+leave\b/i, workType: "Maternity Leave" },
-  { re: /\bpaternity\s+leave\b/i, workType: "Paternity Leave" },
-  { re: /\bemergency\s+leave\b/i, workType: "Emergency Leave" },
-  { re: /\bbereavement\s+leave\b/i, workType: "Bereavement Leave" },
-  { re: /\bholiday\b/i, workType: "Holiday" },
-  { re: /\bvacation\b/i, workType: "Vacation Leave" },
-  { re: /\bpto\b/i, workType: "PTO" },
-  { re: /\bleave\b/i, workType: "Leave" }, // generic — checked last
-];
+// The keyword map + classifiers live in @/lib/leaveClassification so the
+// journal aggregator buckets leaves the SAME way this stage later classifies
+// them (distinct leave types stay in separate cards; case variants merge).
 
-function detectLeaveWorkType(text: string): string | null {
-  for (const { re, workType } of LEAVE_WORKTYPES) {
-    if (re.test(text)) return workType;
-  }
-  return null;
-}
+/**
+ * Epic 1 — reroute a time-off task into General Work → OTHERS. The OTHERS sub
+ * category name is resolved from the live General Work sub categories
+ * (case-insensitive), falling back to the literal "OTHERS" when the scope
+ * isn't configured (e.g. local seed without the bucket). subCategory is
+ * stamped BEFORE work-type inference because the inference is scoped to it.
+ *
+ * @param task              the parsed task to (possibly) reroute
+ * @param generalWorkSubs   live sub categories under "General Work"
+ * @param scopeWorkTypesFor resolver: sub category name → its Work Type names
+ */
+function applyLeaveOverride(
+  task: ParsedTask,
+  generalWorkSubs: readonly { name: string }[],
+  scopeWorkTypesFor: (sub: string) => readonly string[],
+): ParsedTask {
+  if (!isLeaveOrHolidayLog(task.description)) return task;
 
-/** Force any leave/holiday task into General Work → Others with the matched work type. */
-function applyLeaveOverride(task: ParsedTask): ParsedTask {
-  const workType = detectLeaveWorkType(task.description);
-  if (!workType) return task;
+  const subCategory =
+    generalWorkSubs.find((s) => s.name.trim().toLowerCase() === "others")
+      ?.name ?? "OTHERS";
+
+  const workType = inferOthersWorkType(
+    task.description,
+    scopeWorkTypesFor(subCategory),
+  );
+
   return {
     ...task,
     workCategory: "General Work",
-    subCategory: "Others",
-    workType,
+    subCategory,
+    workType: workType ?? "", // null → blank → user picks manually
   };
 }
 
@@ -469,9 +480,15 @@ const Workspace = ({
         return;
       }
 
-      // Leave/Holiday intercept (Epic 1): reroute any time-off task to
-      // General Work → Others before merging into streams.
-      const tasks = result.tasks.map(applyLeaveOverride);
+      // Leave/Holiday intercept: reroute any time-off task to General Work →
+      // OTHERS and infer its Work Type from the description, resolving both
+      // against the live taxonomy so the dropdowns render a matching value.
+      const generalWorkSubs = subCategoriesForMain("General Work");
+      const tasks = result.tasks.map((t) =>
+        applyLeaveOverride(t, generalWorkSubs, (sub) =>
+          workTypesForParent(sub).map((w) => w.name),
+        ),
+      );
       // Percentage scaling (Epic 1): only Auto-Generate output is normalized
       // to 100%. Manually typed prompts keep their exact percentages.
       applyParsedTasks(tasks, autoGenerated);

@@ -1240,3 +1240,64 @@ describe("Epic 3 — multi-line parser preserves header context + all bullets", 
     expect(result[0].percentage).toBe(39.62);
   });
 });
+
+// ---------------------------------------------------------------------
+// Scenario A fan-out — strict official-client filtering
+// (excludes "(custom)" / unregistered artifacts; math divides by the
+//  filtered count)
+// ---------------------------------------------------------------------
+
+describe("parseWorkAllocation — fan-out excludes custom clients", () => {
+  // Geniisys sub-category under a "Projects" main. AUII/UCPB are in the
+  // KNOWN_CLIENTS roster; the others are frontend artifacts that leaked into
+  // the assignment list and must NOT spawn their own card.
+  const fanOutOptions = {
+    ...baseOptions,
+    taxonomy: {
+      subCategoryToMain: { Geniisys: "Projects" },
+      defaultWorkTypeByParent: { Geniisys: "Implementation" },
+      workTypesByParent: { Geniisys: ["Implementation"] },
+      clientsBySubCategory: {
+        Geniisys: ["AUII", "UCPB (custom)", "UCPB", "GhostCo"],
+      },
+    },
+  };
+
+  it("drops the '(custom)' artifact and the unregistered client, keeping only official clients", () => {
+    const result = parseWorkAllocation(
+      "- #Geniisys sprint work - 40%",
+      fanOutOptions,
+    );
+    // Only AUII and UCPB survive → 2 cards, not 4.
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.client).sort()).toEqual(["AUII", "UCPB"]);
+  });
+
+  it("splits the percentage across the FILTERED count so the total still sums to the block %", () => {
+    const result = parseWorkAllocation(
+      "- #Geniisys sprint work - 40%",
+      fanOutOptions,
+    );
+    // 40% / 2 official clients = 20% each (NOT 40/4 = 10%).
+    for (const task of result) expect(task.percentage).toBe(20);
+    const total = result.reduce((sum, t) => sum + t.percentage, 0);
+    expect(total).toBe(40);
+  });
+
+  it("does not fan out at all when no client survives the filter", () => {
+    const noOfficial = {
+      ...baseOptions,
+      taxonomy: {
+        ...fanOutOptions.taxonomy,
+        clientsBySubCategory: { Geniisys: ["GhostCo (custom)", "GhostCo"] },
+      },
+    };
+    const result = parseWorkAllocation(
+      "- #Geniisys sprint work - 40%",
+      noOfficial,
+    );
+    // Falls through to a single non-fanned card at the full percentage.
+    expect(result).toHaveLength(1);
+    expect(result[0].percentage).toBe(40);
+  });
+});

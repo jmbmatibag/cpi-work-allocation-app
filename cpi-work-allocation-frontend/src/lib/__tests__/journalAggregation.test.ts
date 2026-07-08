@@ -90,6 +90,47 @@ describe("aggregateJournalEntries — multi-word #category tags", () => {
   });
 });
 
+describe("aggregateJournalEntries — leaves bucket by Work Type", () => {
+  it("keeps distinct leave types in separate cards", () => {
+    const entries: JournalEntry[] = [
+      { date: "2026-07-01", content: "8:00 am to 5:00 pm Sick leave" },
+      { date: "2026-07-02", content: "8:00 am to 5:00 pm Vacation leave" },
+    ];
+
+    const items = aggregateJournalEntries(entries, { knownClients: [] });
+
+    // Sick and Vacation must NOT consolidate into one card.
+    expect(items).toHaveLength(2);
+    const texts = items.map((i) => i.bullets.join(" ").toLowerCase());
+    expect(texts.some((t) => t.includes("sick"))).toBe(true);
+    expect(texts.some((t) => t.includes("vacation"))).toBe(true);
+  });
+
+  it("merges case variants of the same leave type into one card", () => {
+    const entries: JournalEntry[] = [
+      { date: "2026-07-01", content: "8:00 am to 5:00 pm sick leave" },
+      { date: "2026-07-02", content: "8:00 am to 5:00 pm Sick Leave" },
+      { date: "2026-07-03", content: "8:00 am to 5:00 pm SICK LEAVE" },
+    ];
+
+    const items = aggregateJournalEntries(entries, { knownClients: [] });
+
+    // All three cased forms are the SAME leave type → one card, three days.
+    expect(items).toHaveLength(1);
+    expect(items[0].days).toHaveLength(3);
+  });
+
+  it("does not lump a generic 'on leave' in with a specific type", () => {
+    const entries: JournalEntry[] = [
+      { date: "2026-07-01", content: "8:00 am to 5:00 pm on leave" },
+      { date: "2026-07-02", content: "8:00 am to 5:00 pm sick leave" },
+    ];
+
+    const items = aggregateJournalEntries(entries, { knownClients: [] });
+    expect(items).toHaveLength(2);
+  });
+});
+
 describe("formatAggregationAsPrompt — clean bullets for multi-word tags", () => {
   it("emits the full tag in the header and a clean bullet (no '& DEVELOPMENT' leak)", () => {
     const entries: JournalEntry[] = [

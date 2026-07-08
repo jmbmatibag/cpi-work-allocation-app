@@ -4,6 +4,7 @@ import {
   type SmartLineInput,
 } from "./timelineParser";
 import { categoryTagBody } from "./tagHighlight";
+import { isLeaveOrHolidayLog, leaveWorkTypeKey } from "./leaveClassification";
 
 /**
  * Journal aggregation — consolidates a month of journal entries into
@@ -499,6 +500,13 @@ export function aggregateJournalEntries(
    * force-routed to sub-category "Geniisys" AND given a globally-unique key,
    * guaranteeing it renders as its own standalone allocation card while still
    * preserving its @client hook (the key is still client-scoped).
+   *
+   * Leave / holiday units bucket by their DETECTED Work Type (case-
+   * insensitive) rather than by category. Untagged leaves would otherwise all
+   * collapse into the one `__untagged__` bucket, consolidating "Sick Leave"
+   * and "Vacation Leave" into a single card. Keying on the leave type keeps
+   * distinct types in separate cards while still merging case variants
+   * ("sick leave" / "Sick Leave" / "SICK LEAVE").
    */
   const resolveBucket = (
     client: string,
@@ -512,6 +520,14 @@ export function aggregateJournalEntries(
         key: `__specific_enhancement__::${specificEnhancementSeq++}::${client}`,
         category: SPECIFIC_ENHANCEMENT_SUBCATEGORY,
       };
+    }
+    // Untagged leaves have no category, so they'd all share one bucket. Split
+    // by detected leave type so distinct types don't consolidate. An untagged
+    // leave (e.g. "on leave") with no specific type still shares one bucket.
+    const unitText = unit.bullets.join(" ");
+    if (!unit.categoryTag && isLeaveOrHolidayLog(unitText)) {
+      const typeKey = leaveWorkTypeKey(unitText) ?? "__unclassified__";
+      return { key: `${client}::__leave__::${typeKey}` };
     }
     const category = unit.categoryTag;
     return { key: `${client}::${category ?? "__untagged__"}`, category };
