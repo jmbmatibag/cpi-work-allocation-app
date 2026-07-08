@@ -3,6 +3,7 @@ import {
   resolveSmartLines,
   type SmartLineInput,
 } from "./timelineParser";
+import { categoryTagBody } from "./tagHighlight";
 
 /**
  * Journal aggregation — consolidates a month of journal entries into
@@ -59,15 +60,126 @@ export interface AggregationOptions {
   knownClients: readonly string[];
   /** Fallback client label when no @tag and no known-client match. */
   fallbackClient?: string;
+  /**
+   * Full taxonomy name list (main categories + sub categories). Used to
+   * recognise multi-word `#category` tags — "TRAINING & DEVELOPMENT",
+   * "Sales, Marketing & BD", "Quick Policy" — as a single token during
+   * extraction. Without it, tag extraction degrades to single-word matching
+   * (the pre-fix behaviour that truncated "#TRAINING & DEVELOPMENT" to
+   * "#TRAINING"). Optional so tests / legacy call sites keep working.
+   */
+  knownCategories?: readonly string[];
 }
 
 // ---------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------
 
-// Tag extractors: lookbehind prevents matching inside emails / glued tokens.
+// Client tag extractor: lookbehind prevents matching inside emails / glued
+// tokens. Client codes are single tokens (@AFPGEN), so no multi-word handling
+// is needed here — only #category tags fracture on spaces/ampersands.
 const CLIENT_TAG_RE   = /(?<![A-Za-z0-9])@([A-Za-z][A-Za-z0-9_-]*)/;
-const CATEGORY_TAG_RE = /(?<![A-Za-z0-9])#([A-Za-z][A-Za-z0-9_/-]*)/;
+
+/**
+ * The set of regexes used to find and strip `#category` tags. Built from the
+ * live taxonomy name list so a multi-word name (e.g. "TRAINING & DEVELOPMENT")
+ * is captured whole instead of stopping at the first space or `&`. When no
+ * category names are supplied the body degrades to the single-word form, so
+ * behaviour is identical to the old hardcoded `#([A-Za-z][A-Za-z0-9_/-]*)`.
+ *
+ * All three share ONE body (categoryTagBody) so extraction, display-stripping
+ * and dedup-stripping agree on exactly where a tag ends — the class of bug
+ * that let "#TRAINING" and "& DEVELOPMENT …" split apart.
+ */
+export interface CategoryTagMatcher {
+  /** Non-global, capturing — group 1 is the first tag body (without `#`). */
+  extract: RegExp;
+  /** Global — strips every full `#tag` plus a following run of whitespace. */
+  stripWithSpace: RegExp;
+  /** Global — strips every full `#tag`, leaving surrounding spacing intact. */
+  strip: RegExp;
+}
+
+function buildCategoryMatcher(
+  knownCategories: readonly string[] = [],
+): CategoryTagMatcher {
+  const body = categoryTagBody(knownCategories);
+  return {
+    extract: new RegExp(`(?<![A-Za-z0-9])#(${body})`),
+    stripWithSpace: new RegExp(`(?<![A-Za-z0-9])#${body}\\s*`, "g"),
+    strip: new RegExp(`(?<![A-Za-z0-9])#${body}`, "g"),
+  };
+}
+
+/**
+ * Single-word default matcher, used when a caller doesn't supply the taxonomy
+ * name list (tests, legacy). Preserves the pre-fix single-token behaviour.
+ */
+const DEFAULT_CATEGORY_MATCHER = buildCategoryMatcher();
+
+/**
+ * Epic 1 — Robust whitespace normalization.
+ *
+ * Collapse every run of whitespace (multiple spaces, tabs, stray newlines)
+ * down to a single space and strip the leading/trailing edges. This is the
+ * `normalizedLog` step: it runs on every parsed activity line BEFORE the
+ * consolidation/dedup so that logs differing only by internal spacing —
+ * "#Geniisys Support" vs. "#Geniisys  Support" — collapse to the SAME
+ * bucket / dedup key instead of fracturing into separate allocations
+ * (the "#Geniisys Support - 3.33%" multi-line symptom).
+ *
+ * Case-insensitivity is handled at the dedup-key layer (`.toLowerCase()`);
+ * this helper only normalizes spacing so the original casing survives for
+ * display.
+ */
+function normalizeWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Epic 1 — canonical key for bullet de-duplication within a bucket.
+ *
+ * Strips @client / #category tags, collapses whitespace, and lowercases so
+ * that bullets describing the SAME work collapse to a single entry regardless
+ * of cosmetic differences:
+ *   - internal spacing        ("#Geniisys Support"  vs "#Geniisys  Support")
+ *   - letter case             ("Support" vs "support" vs "SUpport")
+ *   - tag presence / ordering ("#Geniisys Support @AUII" vs "@AUII support #Geniisys")
+ *
+ * The tags are NOT lost: they're captured at the unit level (clientTags /
+ * categoryTag) and drive the bucket's client + category. For the purpose of
+ * comparing two bullet strings inside one bucket, the per-bullet tag text is
+ * pure noise — including it in the key is exactly what let "Support" and
+ * "support" survive as separate bullets on the same card.
+ */
+function bulletDedupKey(
+  text: string,
+  cat: CategoryTagMatcher = DEFAULT_CATEGORY_MATCHER,
+): string {
+  return normalizeWhitespace(
+    text
+      .replace(/(?<![A-Za-z0-9])@[A-Za-z][A-Za-z0-9_-]*/g, "")
+      .replace(cat.strip, ""),
+  ).toLowerCase();
+}
+
+/**
+ * Epic 2 — Case-insensitive, whitespace-resistant "Specific Enhancement"
+ * detector. The `\s*` between the two words matches zero-or-more spaces, so
+ * "Specific Enhancement", "specific   enhancement" and the glued
+ * "SpecificEnhancement" all match. Any log line matching this is treated as
+ * a UNIQUE piece of work and is never merged into a shared client/category
+ * block (see aggregateJournalEntries).
+ */
+const SPECIFIC_ENHANCEMENT_RE = /specific\s*enhancement/i;
+
+/**
+ * Epic 2 — the fixed taxonomy path every "Specific Enhancement" log is
+ * routed to: Projects → Geniisys → Specific Enhancement. Only the
+ * sub-category is stored on the bucket (emitted as `#Geniisys`); the parser
+ * resolves the main category and the work type downstream.
+ */
+const SPECIFIC_ENHANCEMENT_SUBCATEGORY = "Geniisys";
 
 // Bullet / list markers: -, --, •, *, 1., 2), etc.
 const LIST_MARKER_RE = /^(?:[-–•*]+|\d+[.)])\s*/;
@@ -109,10 +221,15 @@ function calcMinutes(start: string, end: string): number {
  *
  * Single-line descriptions stay a single bullet — original behavior.
  */
-function descriptionToUnit(description: string): LineUnit {
+function descriptionToUnit(
+  description: string,
+  cat: CategoryTagMatcher = DEFAULT_CATEGORY_MATCHER,
+): LineUnit {
   const rawLines = description
     .split("\n")
-    .map((l) => l.replace(LIST_MARKER_RE, "").trim())
+    // Epic 1: strip the bullet marker, then normalize internal whitespace so
+    // spacing variants dedupe cleanly downstream.
+    .map((l) => normalizeWhitespace(l.replace(LIST_MARKER_RE, "")))
     .filter(Boolean);
 
   if (rawLines.length === 0) {
@@ -120,12 +237,14 @@ function descriptionToUnit(description: string): LineUnit {
   }
 
   // Extract tags from the combined text so a header like "@AAA:" still
-  // contributes its tag even when we drop the header from bullets.
+  // contributes its tag even when we drop the header from bullets. The
+  // category matcher captures multi-word names whole (e.g. the full
+  // "TRAINING & DEVELOPMENT", not just "TRAINING").
   const combined = rawLines.join(" ");
   const clientTags = [
     ...combined.matchAll(new RegExp(CLIENT_TAG_RE.source, "g")),
   ].map((m) => m[1]);
-  const categoryTag = combined.match(CATEGORY_TAG_RE)?.[1];
+  const categoryTag = combined.match(cat.extract)?.[1];
 
   // When the first line is a bare annotation header — only tags and a
   // trailing colon, no actual work text — drop it from bullets. Without
@@ -138,7 +257,7 @@ function descriptionToUnit(description: string): LineUnit {
   if (rawLines.length > 1) {
     const stripped = rawLines[0]
       .replace(/(?<![A-Za-z0-9])@[A-Za-z][A-Za-z0-9_-]*/g, "")
-      .replace(/(?<![A-Za-z0-9])#[A-Za-z][A-Za-z0-9_/-]*/g, "")
+      .replace(cat.strip, "")
       .replace(/[:\s]+/g, "")
       .trim();
     if (stripped === "") {
@@ -165,8 +284,14 @@ function descriptionToUnit(description: string): LineUnit {
  * Blank lines are ignored. Tags are extracted but left in the bullet
  * text so the user sees them in the prompt for inspection.
  */
-function parseEntryIntoUnits(content: string): LineUnit[] {
-  const lines = content.split("\n").map((l) => l.trim());
+function parseEntryIntoUnits(
+  content: string,
+  cat: CategoryTagMatcher = DEFAULT_CATEGORY_MATCHER,
+): LineUnit[] {
+  // Epic 1: normalize each line's internal whitespace up front so every
+  // downstream comparison (header detection, bullet dedup) sees canonical
+  // single-spaced text.
+  const lines = content.split("\n").map((l) => normalizeWhitespace(l));
   const units: LineUnit[] = [];
 
   let i = 0;
@@ -180,7 +305,7 @@ function parseEntryIntoUnits(content: string): LineUnit[] {
     // Hierarchical block: Header: followed by -- bullets
     const headerMatch = line.match(HIERARCHICAL_HEADER_RE);
     if (headerMatch && i + 1 < lines.length) {
-      const headerText = headerMatch[1].trim();
+      const headerText = normalizeWhitespace(headerMatch[1]);
       const subBullets: string[] = [];
       let j = i + 1;
 
@@ -191,14 +316,14 @@ function parseEntryIntoUnits(content: string): LineUnit[] {
           continue;
         }
         if (!HIERARCHICAL_BULLET_RE.test(bLine)) break;
-        subBullets.push(bLine.replace(LIST_MARKER_RE, "").trim());
+        subBullets.push(normalizeWhitespace(bLine.replace(LIST_MARKER_RE, "")));
         j++;
       }
 
       if (subBullets.length > 0) {
         const combined = `${headerText} ${subBullets.join(" ")}`;
         const clientTags = [...combined.matchAll(new RegExp(CLIENT_TAG_RE.source, "g"))].map(m => m[1]);
-        const categoryTag = combined.match(CATEGORY_TAG_RE)?.[1];
+        const categoryTag = combined.match(cat.extract)?.[1];
         units.push({
           bullets: [headerText, ...subBullets],
           clientTags,
@@ -210,10 +335,10 @@ function parseEntryIntoUnits(content: string): LineUnit[] {
     }
 
     // Standalone line
-    const bullet = line.replace(LIST_MARKER_RE, "").trim();
+    const bullet = normalizeWhitespace(line.replace(LIST_MARKER_RE, ""));
     if (bullet) {
       const clientTags = [...bullet.matchAll(new RegExp(CLIENT_TAG_RE.source, "g"))].map(m => m[1]);
-      const categoryTag = bullet.match(CATEGORY_TAG_RE)?.[1];
+      const categoryTag = bullet.match(cat.extract)?.[1];
       units.push({
         bullets: [bullet],
         clientTags,
@@ -324,10 +449,15 @@ export function aggregateJournalEntries(
   entries: readonly JournalEntry[],
   options: AggregationOptions,
 ): AggregatedTask[] {
-  const { knownClients, fallbackClient = "Internal" } = options;
+  const { knownClients, fallbackClient = "Internal", knownCategories = [] } = options;
   const clientFallbackRe = knownClients.length
     ? new RegExp(`\\b(${knownClients.join("|")})\\b`, "i")
     : null;
+
+  // Epic 1: one multi-word-aware category matcher for the whole pass, so a tag
+  // like "#TRAINING & DEVELOPMENT" is captured/stripped as a single token
+  // instead of fracturing into "#TRAINING" + "& DEVELOPMENT …".
+  const cat = buildCategoryMatcher(knownCategories);
 
   const resolveClients = (unit: LineUnit): string[] => {
     if (unit.clientTags.length > 0) return unit.clientTags;
@@ -356,6 +486,37 @@ export function aggregateJournalEntries(
   };
   const buckets = new Map<string, Bucket>();
 
+  // Epic 2: monotonic counter used to mint a UNIQUE bucket key for every
+  // "Specific Enhancement" unit so they never collapse into one another or
+  // into a shared client/category block. Incremented once per isolated card.
+  let specificEnhancementSeq = 0;
+
+  /**
+   * Epic 2 — resolve the bucket key + effective category for one work unit.
+   *
+   * Normal units bucket by `${client}::${category}` so identical work across
+   * days consolidates. A unit whose text matches SPECIFIC_ENHANCEMENT_RE is
+   * force-routed to sub-category "Geniisys" AND given a globally-unique key,
+   * guaranteeing it renders as its own standalone allocation card while still
+   * preserving its @client hook (the key is still client-scoped).
+   */
+  const resolveBucket = (
+    client: string,
+    unit: LineUnit,
+  ): { key: string; category?: string } => {
+    const isSpecificEnhancement = unit.bullets.some((b) =>
+      SPECIFIC_ENHANCEMENT_RE.test(b),
+    );
+    if (isSpecificEnhancement) {
+      return {
+        key: `__specific_enhancement__::${specificEnhancementSeq++}::${client}`,
+        category: SPECIFIC_ENHANCEMENT_SUBCATEGORY,
+      };
+    }
+    const category = unit.categoryTag;
+    return { key: `${client}::${category ?? "__untagged__"}`, category };
+  };
+
   const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
 
   for (const entry of sorted) {
@@ -378,18 +539,19 @@ export function aggregateJournalEntries(
         const description = block.description.trim();
         if (!description) continue;
 
-        const unit = descriptionToUnit(description);
+        const unit = descriptionToUnit(description, cat);
         if (unit.bullets.length === 0) continue;
 
         const clients = resolveClients(unit);
         const isExplicit = unit.clientTags.length > 0;
-        const category = unit.categoryTag;
         const minutes = calcMinutes(block.startTime, block.endTime);
         // Divide block duration equally when the line mentions multiple clients.
         const minutesEach = clients.length > 1 ? minutes / clients.length : minutes;
 
         for (const client of clients) {
-          const key = `${client}::${category ?? "__untagged__"}`;
+          // Epic 2: Specific Enhancement units get a unique, isolated bucket
+          // (never consolidated); everything else buckets by client+category.
+          const { key, category } = resolveBucket(client, unit);
           let bucket = buckets.get(key);
           if (!bucket) {
             bucket = { client, category, bullets: [], days: new Set(), seenBullets: new Set(), totalMinutes: 0, explicitClient: false };
@@ -401,26 +563,30 @@ export function aggregateJournalEntries(
           bucket.days.add(entry.date);
 
           for (const raw of unit.bullets) {
-            const norm = raw.toLowerCase().trim();
+            // Epic 1: compare on a tag-/case-/spacing-insensitive key so
+            // "#Geniisys Support @AUII" and "@AUII support #Geniisys" collapse
+            // to one bullet instead of fracturing the card.
+            const norm = bulletDedupKey(raw, cat);
             if (!norm || bucket.seenBullets.has(norm)) continue;
             bucket.seenBullets.add(norm);
-            bucket.bullets.push(raw);
+            bucket.bullets.push(normalizeWhitespace(raw));
           }
         }
       }
     } else {
       // ── Legacy content entry: parse bullet lines ──────────────────────
-      const units = parseEntryIntoUnits(entry.content);
+      const units = parseEntryIntoUnits(entry.content, cat);
 
       for (const unit of units) {
         const clients = resolveClients(unit);
         const isExplicit = unit.clientTags.length > 0;
-        const category = unit.categoryTag;
         // Divide the 8h fallback equally when the line mentions multiple clients.
         const minutesPerClient = 480 / clients.length;
 
         for (const client of clients) {
-          const key = `${client}::${category ?? "__untagged__"}`;
+          // Epic 2: Specific Enhancement units get a unique, isolated bucket
+          // (never consolidated); everything else buckets by client+category.
+          const { key, category } = resolveBucket(client, unit);
           let bucket = buckets.get(key);
           if (!bucket) {
             bucket = { client, category, bullets: [], days: new Set(), seenBullets: new Set(), totalMinutes: 0, explicitClient: false };
@@ -435,10 +601,13 @@ export function aggregateJournalEntries(
           bucket.days.add(entry.date);
 
           for (const raw of unit.bullets) {
-            const norm = raw.toLowerCase().trim();
+            // Epic 1: compare on a tag-/case-/spacing-insensitive key so
+            // "#Geniisys Support @AUII" and "@AUII support #Geniisys" collapse
+            // to one bullet instead of fracturing the card.
+            const norm = bulletDedupKey(raw, cat);
             if (!norm || bucket.seenBullets.has(norm)) continue;
             bucket.seenBullets.add(norm);
-            bucket.bullets.push(raw);
+            bucket.bullets.push(normalizeWhitespace(raw));
           }
         }
       }
@@ -469,6 +638,13 @@ export function aggregateJournalEntries(
 
 export interface FormatOptions {
   fallbackClient?: string;
+  /**
+   * Full taxonomy name list — same purpose as in AggregationOptions. Needed so
+   * stripTags removes a multi-word `#category` tag whole when cleaning the
+   * bullet text for display (otherwise "#TRAINING & DEVELOPMENT 2nd COC…"
+   * strips to "& DEVELOPMENT 2nd COC…"). Optional; degrades to single-word.
+   */
+  knownCategories?: readonly string[];
 }
 
 /**
@@ -487,7 +663,8 @@ export function formatAggregationAsPrompt(
   items: readonly AggregatedTask[],
   options: FormatOptions = {},
 ): string {
-  const { fallbackClient = "Internal" } = options;
+  const { fallbackClient = "Internal", knownCategories = [] } = options;
+  const cat = buildCategoryMatcher(knownCategories);
 
   const sorted = [...items].sort((a, b) => b.pct - a.pct);
 
@@ -499,14 +676,19 @@ export function formatAggregationAsPrompt(
       const tagPrefix = tagBits.length ? `${tagBits.join(" ")} ` : "";
 
       if (item.bullets.length === 1) {
-        const bulletText = stripTags(item.bullets[0]);
+        const bulletText = stripTags(item.bullets[0], cat);
         return `- ${tagPrefix}${bulletText} - ${item.pct.toFixed(2)}%`;
       }
 
-      const headerLabel = tagBits.length ? "Work" : (item.client || "Work");
-      const header = `${tagPrefix}${headerLabel}:`;
+      // When the bucket has tags, the tags ARE the header context — don't
+      // append a bare "Work" placeholder (it leaks into the card's leading
+      // description line / title once the parser preserves the header). Fall
+      // back to the client name, then "Work", only when there are no tags.
+      const header = tagBits.length
+        ? `${tagBits.join(" ")}:`
+        : `${item.client || "Work"}:`;
       const bulletLines = item.bullets.map((b, idx) => {
-        const text = stripTags(b);
+        const text = stripTags(b, cat);
         const suffix =
           idx === item.bullets.length - 1 ? ` - ${item.pct.toFixed(2)}%` : "";
         return `-- ${text}${suffix}`;
@@ -517,12 +699,18 @@ export function formatAggregationAsPrompt(
 }
 
 /**
- * Strip any `@client` or `#category` tags from a bullet text.
+ * Strip any `@client` or `#category` tags from a bullet text. The category
+ * matcher removes a multi-word tag whole (e.g. the entire
+ * "#TRAINING & DEVELOPMENT", not just "#TRAINING"), so the remaining text
+ * starts cleanly at the real task ("2nd COC: Cybersecurity …").
  */
-function stripTags(text: string): string {
+function stripTags(
+  text: string,
+  cat: CategoryTagMatcher = DEFAULT_CATEGORY_MATCHER,
+): string {
   return text
     .replace(/(?<![A-Za-z0-9])@[A-Za-z][A-Za-z0-9_-]*\s*/g, "")
-    .replace(/(?<![A-Za-z0-9])#[A-Za-z][A-Za-z0-9_/-]*\s*/g, "")
+    .replace(cat.stripWithSpace, "")
     .replace(/\s+/g, " ")
     .trim();
 }

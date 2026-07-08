@@ -1032,3 +1032,211 @@ describe("Work-type selection is parent-agnostic (all categories & sub-categorie
     expect(r[0].workType).toBe("");
   });
 });
+
+// ---------------------------------------------------------------------
+// Epic 1 — Robust whitespace normalization & consolidation
+// ---------------------------------------------------------------------
+// Daily logs differing only by internal spacing must consolidate into a
+// single bucket instead of fracturing into multiple allocations.
+describe("Epic 1 — whitespace normalization & consolidation", () => {
+  it("collapses internal double-spaces so spacing variants share one bucket", () => {
+    const entries = [
+      { date: "2026-04-01", content: "- @AUII #Geniisys Support task" },
+      // Same work, but with a doubled internal space — must NOT fracture.
+      { date: "2026-04-02", content: "- @AUII #Geniisys  Support task" },
+      { date: "2026-04-03", content: "- @AUII #Geniisys Support task" },
+    ];
+    const aggregated = aggregateJournalEntries(entries, {
+      knownClients: KNOWN_CLIENTS,
+    });
+    // One (client, category) bucket, not three fractured ones.
+    expect(aggregated).toHaveLength(1);
+    expect(aggregated[0].client).toBe("AUII");
+    expect(aggregated[0].pct).toBe(100);
+    // The spacing-only variants dedupe to a single bullet.
+    expect(aggregated[0].bullets).toHaveLength(1);
+    // Stored bullet text is normalized (no double spaces).
+    expect(aggregated[0].bullets[0]).not.toMatch(/ {2,}/);
+  });
+
+  it("dedupes across case + tag-order differences (user-reported case)", () => {
+    // Four time-blocked entries, all '#Geniisys Support'. Two carry @AUII,
+    // two don't. Cosmetic differences (double spaces, case, tag position)
+    // must NOT create duplicate 'Support' / 'support' / 'SUpport' bullets.
+    const entries = [
+      { date: "2026-04-01", content: "9:00 am to 12:00 pm #Geniisys   Support" },
+      { date: "2026-04-02", content: "1:00 pm to 6:00 pm #Geniisys  Support  @AUII" },
+      { date: "2026-04-03", content: "9:00 am to 10:00 am SUpport #Geniisys" },
+      { date: "2026-04-04", content: "11:00 am to 6:00 pm #Geniisys @AUII   support" },
+    ];
+    const aggregated = aggregateJournalEntries(entries, {
+      knownClients: KNOWN_CLIENTS,
+    });
+
+    // Two buckets: AUII (explicit tag) and Internal (the two untagged lines).
+    expect(aggregated).toHaveLength(2);
+
+    // Every card collapses its Support variants to a SINGLE bullet.
+    for (const item of aggregated) {
+      expect(item.bullets).toHaveLength(1);
+    }
+
+    const auii = aggregated.find((a) => a.client === "AUII");
+    expect(auii).toBeDefined();
+    expect(auii!.category).toBe("Geniisys");
+  });
+});
+
+// ---------------------------------------------------------------------
+// Epic 2 — Specific Enhancement bypasses consolidation + routes to
+// Projects → Geniisys → Specific Enhancement
+// ---------------------------------------------------------------------
+const specificEnhancementTaxonomy: TaxonomySnapshot = {
+  subCategoryToMain: { Geniisys: "Projects" },
+  defaultWorkTypeByParent: {
+    Projects: "Development",
+    Geniisys: "Implementation",
+  },
+  workTypesByParent: {
+    Projects: ["Development", "Testing"],
+    Geniisys: [
+      "Implementation",
+      "Enhancement",
+      "Specific Enhancement",
+      "Support",
+      "Testing",
+    ],
+  },
+};
+
+const specificEnhancementOptions = {
+  defaultTeam: "IT/Platforms",
+  knownClients: ["AXA", "COCOGEN"],
+  fallbackClient: "Internal",
+  taxonomy: specificEnhancementTaxonomy,
+};
+
+describe("Epic 2 — Specific Enhancement isolation & routing", () => {
+  it("each Specific Enhancement log gets its own card (never consolidated)", () => {
+    const entries = [
+      { date: "2026-04-01", content: "- #Geniisys Specific Enhancement @AXA Smart Claims" },
+      { date: "2026-04-02", content: "- #Geniisys Specific Enhancement @COCOGEN Policy Renewal" },
+      // A third, distinct SE item for the SAME client must still be its own card.
+      { date: "2026-04-03", content: "- #Geniisys Specific Enhancement @AXA Motor Quote" },
+    ];
+    const aggregated = aggregateJournalEntries(entries, {
+      knownClients: ["AXA", "COCOGEN"],
+    });
+    // Three isolated cards — no merging by client or category.
+    expect(aggregated).toHaveLength(3);
+    // All routed to the Geniisys sub-category.
+    for (const item of aggregated) {
+      expect(item.category).toBe("Geniisys");
+    }
+  });
+
+  it("does NOT merge SE work into a general same-client block", () => {
+    const entries = [
+      { date: "2026-04-01", content: "- @AXA #Geniisys Support routine ticket" },
+      { date: "2026-04-02", content: "- @AXA #Geniisys Specific Enhancement Smart Claims" },
+    ];
+    const aggregated = aggregateJournalEntries(entries, {
+      knownClients: ["AXA", "COCOGEN"],
+    });
+    // The Support bucket and the isolated SE card stay separate → 2 buckets.
+    expect(aggregated).toHaveLength(2);
+    const seCard = aggregated.find((a) =>
+      a.bullets.some((b) => /specific\s*enhancement/i.test(b)),
+    );
+    expect(seCard).toBeDefined();
+  });
+
+  it("parser routes a Specific Enhancement line to Geniisys / Specific Enhancement", () => {
+    const result = parseWorkAllocation(
+      "- @AXA #Geniisys Specific Enhancement Smart Claims - 100%",
+      specificEnhancementOptions,
+    );
+    expect(result[0]).toMatchObject({
+      workCategory: "Projects",
+      subCategory: "Geniisys",
+      workType: "Specific Enhancement",
+      client: "AXA",
+    });
+  });
+
+  it("glued 'SpecificEnhancement' (no space) still routes correctly", () => {
+    const result = parseWorkAllocation(
+      "- @COCOGEN #Geniisys SpecificEnhancement Renewal flow - 100%",
+      specificEnhancementOptions,
+    );
+    expect(result[0].workType).toBe("Specific Enhancement");
+    expect(result[0].client).toBe("COCOGEN");
+  });
+
+  it("round-trips: aggregation → prompt → parse preserves SE routing", () => {
+    const entries = [
+      { date: "2026-04-01", content: "- #Geniisys Specific Enhancement @AXA Smart Claims" },
+    ];
+    const aggregated = aggregateJournalEntries(entries, {
+      knownClients: ["AXA", "COCOGEN"],
+    });
+    const promptText = formatAggregationAsPrompt(aggregated);
+    const parsed = parseWorkAllocation(promptText, specificEnhancementOptions);
+    expect(parsed[0]).toMatchObject({
+      workCategory: "Projects",
+      subCategory: "Geniisys",
+      workType: "Specific Enhancement",
+      client: "AXA",
+    });
+  });
+
+  it("does not force SE when the phrase is absent (Epic 4 still governs)", () => {
+    const result = parseWorkAllocation(
+      "- @AXA #Geniisys unrelated maintenance work - 100%",
+      specificEnhancementOptions,
+    );
+    expect(result[0].workType).not.toBe("Specific Enhancement");
+  });
+});
+
+// ---------------------------------------------------------------------
+// Epic 3 — multi-line block: header sets context, all bullets preserved
+// ---------------------------------------------------------------------
+describe("Epic 3 — multi-line parser preserves header context + all bullets", () => {
+  it("keeps every child sub-task in the description (no swallowing)", () => {
+    const input = [
+      "#Geniisys Related Task for @AXA:",
+      "-- using AWS ATHENA to get S3 bucket read and write logs",
+      "-- Continua Axa GENIISYS Deployment",
+      "-- Fix Cross Account AMI Backup - 100%",
+    ].join("\n");
+    const result = parseWorkAllocation(input, specificEnhancementOptions);
+    expect(result).toHaveLength(1);
+    // Header defines the base context mapping (not discarded).
+    expect(result[0].workCategory).toBe("Projects");
+    expect(result[0].subCategory).toBe("Geniisys");
+    expect(result[0].client).toBe("AXA");
+    // All three bullets survive in the description.
+    expect(result[0].description).toContain("using AWS ATHENA");
+    expect(result[0].description).toContain("Continua Axa GENIISYS Deployment");
+    expect(result[0].description).toContain("Fix Cross Account AMI Backup");
+  });
+
+  it("keeps the header line as the leading description line (user-reported #Training Work)", () => {
+    const input = [
+      "#Training Work:",
+      "-- & Development pilot testing",
+      "-- & Development maintenance",
+      "-- & Development clean up resources - 39.62%",
+    ].join("\n");
+    const result = parseWorkAllocation(input, phasePOptions);
+    expect(result).toHaveLength(1);
+    // The header "#Training Work" leads the description — not discarded, and
+    // not replaced by the first bullet.
+    const lines = result[0].description.split("\n");
+    expect(lines[0]).toBe("#Training Work");
+    expect(result[0].description).toContain("& Development pilot testing");
+    expect(result[0].description).toContain("& Development clean up resources");
+    expect(result[0].percentage).toBe(39.62);
+  });
+});

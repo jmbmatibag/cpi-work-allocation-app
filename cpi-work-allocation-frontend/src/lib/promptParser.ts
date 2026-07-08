@@ -590,6 +590,59 @@ function refineWorkTypeForParent(
 }
 
 // =====================================================================
+// Epic 2 — "Specific Enhancement" work type forcing
+// =====================================================================
+
+/**
+ * Case-insensitive, whitespace-resistant matcher for "Specific Enhancement".
+ * `\s*` between the words tolerates the glued form "SpecificEnhancement",
+ * the canonical "Specific Enhancement" and any extra-spaced variant alike.
+ */
+const SPECIFIC_ENHANCEMENT_RE = /specific\s*enhancement/i;
+const SPECIFIC_ENHANCEMENT_WORK_TYPE = "Specific Enhancement";
+
+/**
+ * Epic 2 — when a description explicitly names "Specific Enhancement", that
+ * phrase is authoritative: the work type is forced to "Specific Enhancement"
+ * PROVIDED it is selectable under the resolved parent (so the UI dropdown can
+ * actually render it). Consolidation (journalAggregation) already routes these
+ * logs to Projects → Geniisys and keeps each one on its own card; this closes
+ * the loop by pinning the work type deterministically instead of leaving it to
+ * generic keyword scoring.
+ *
+ * Returns null when the phrase is absent, or present but not a valid work type
+ * under this parent — in which case the caller falls back to Epic 4's scoped
+ * inference (and, failing that, a BLANK work type). We never invent an
+ * unselectable value.
+ */
+function forceSpecificEnhancementWorkType(
+  text: string,
+  parent: string,
+  taxonomy: TaxonomySnapshot | undefined,
+): string | null {
+  if (!SPECIFIC_ENHANCEMENT_RE.test(text)) return null;
+
+  // No taxonomy to validate against (e.g. minimal test callers) → trust the
+  // explicit phrase.
+  if (!taxonomy) return SPECIFIC_ENHANCEMENT_WORK_TYPE;
+
+  const validList =
+    taxonomy.workTypesByParent[parent] ??
+    taxonomy.workTypesByParent[
+      Object.keys(taxonomy.workTypesByParent).find(
+        (k) => k.toLowerCase() === parent.toLowerCase(),
+      ) ?? ""
+    ];
+  const isSelectable =
+    !!validList &&
+    validList.some(
+      (w) => w.toLowerCase() === SPECIFIC_ENHANCEMENT_WORK_TYPE.toLowerCase(),
+    );
+
+  return isSelectable ? SPECIFIC_ENHANCEMENT_WORK_TYPE : null;
+}
+
+// =====================================================================
 // Parser
 // =====================================================================
 
@@ -789,7 +842,15 @@ export function parseWorkAllocation(
           }
         }
 
-        const description = bulletLines.map((b) => `• ${b}`).join("\n");
+        // Epic 3: the parent header line is NEVER discarded. It leads the
+        // description as the card's base context (and drives the card title in
+        // the UI); the child sub-tasks follow as bullets. Previously the header
+        // was consumed only for tag/client resolution and dropped, which made
+        // the first bullet masquerade as the card title.
+        const description = [
+          headerText,
+          ...bulletLines.map((b) => `• ${b}`),
+        ].join("\n");
 
         // Phase P: hybrid tag + keyword resolution.
         //
@@ -815,14 +876,23 @@ export function parseWorkAllocation(
         if (resolved) {
           workCategory = resolved.category;
           subCategory = resolved.subCategory;
-          workType = refineWorkTypeForParent(
-            `${headerText} ${bulletLines.join(" ")}`,
-            subCategory ?? workCategory,
-            resolved.category,
-            [resolved.category, resolved.subCategory, ...knownClients],
-            inferenceRules,
-            taxonomy,
-          );
+          const combinedText = `${headerText} ${bulletLines.join(" ")}`;
+          // Epic 2: an explicit "Specific Enhancement" phrase pins the work
+          // type (when selectable here); otherwise Epic 4 scoped inference runs.
+          workType =
+            forceSpecificEnhancementWorkType(
+              combinedText,
+              subCategory ?? workCategory,
+              taxonomy,
+            ) ??
+            refineWorkTypeForParent(
+              combinedText,
+              subCategory ?? workCategory,
+              resolved.category,
+              [resolved.category, resolved.subCategory, ...knownClients],
+              inferenceRules,
+              taxonomy,
+            );
         } else {
           const inferred = inferCategory(
             `${headerText} ${bulletLines.join(" ")}`,
@@ -950,14 +1020,22 @@ export function parseWorkAllocation(
       if (resolved) {
         workCategory = resolved.category;
         subCategory = resolved.subCategory;
-        workType = refineWorkTypeForParent(
-          description,
-          subCategory ?? workCategory,
-          resolved.category,
-          [resolved.category, resolved.subCategory, ...knownClients],
-          inferenceRules,
-          taxonomy,
-        );
+        // Epic 2: an explicit "Specific Enhancement" phrase pins the work type
+        // (when selectable here); otherwise Epic 4 scoped inference runs.
+        workType =
+          forceSpecificEnhancementWorkType(
+            description,
+            subCategory ?? workCategory,
+            taxonomy,
+          ) ??
+          refineWorkTypeForParent(
+            description,
+            subCategory ?? workCategory,
+            resolved.category,
+            [resolved.category, resolved.subCategory, ...knownClients],
+            inferenceRules,
+            taxonomy,
+          );
       } else {
         const inferred = inferCategory(description, inferenceRules);
         workCategory = inferred.category;

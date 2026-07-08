@@ -40,6 +40,43 @@ export function multiWordTagPattern(name: string): string | null {
 }
 
 /**
+ * Single-token fallback for a `#tag` body: a letter followed by word-ish
+ * chars, slashes and hyphens. Used when no known multi-word name matches —
+ * this preserves the original single-word extraction behaviour.
+ */
+const SINGLE_WORD_TAG_BODY = "[A-Za-z][A-Za-z0-9_/-]*";
+
+/**
+ * Build the regex *body* (the part after the `#`) that matches a category
+ * tag, widened to capture known multi-word taxonomy names — e.g.
+ * "TRAINING & DEVELOPMENT", "Sales, Marketing & BD", "Quick Policy" — as a
+ * SINGLE token rather than stopping at the first space, comma or ampersand.
+ *
+ * Each name carrying a separator becomes a separator-tolerant alternate
+ * (longest-first so the most specific name wins); a plain single-word
+ * fallback closes the alternation so unknown/short tags still extract exactly
+ * as before. Single-word names are ignored — the fallback already covers them.
+ *
+ * This is the shared, structured-data-driven core the whole app leans on: the
+ * live editing highlighter (buildHighlightRegex) and the journal aggregator
+ * both consume it, so the SAME tag boundaries are recognised everywhere. Pass
+ * the full taxonomy name list; when it's empty the body degrades to the
+ * single-word form.
+ */
+export function categoryTagBody(names: readonly string[]): string {
+  // Longest first so "Quick Policy Plus" wins over "Quick Policy", and
+  // "Sales, Marketing & BD" is tried before a bare "Sales".
+  const alternates = [...names]
+    .filter((n) => /[^A-Za-z0-9]/.test(n))
+    .sort((a, b) => b.length - a.length)
+    .map(multiWordTagPattern)
+    .filter((p): p is string => p !== null);
+  return alternates.length > 0
+    ? `(?:${alternates.join("|")}|${SINGLE_WORD_TAG_BODY})`
+    : SINGLE_WORD_TAG_BODY;
+}
+
+/**
  * Build a highlight regex that includes known multi-word taxonomy names as
  * explicit alternates so "#Quick Policy" or "#Sales, Marketing & BD" is
  * highlighted as a single token rather than stopping at the first space or
@@ -50,18 +87,8 @@ export function multiWordTagPattern(name: string): string | null {
  *                        unknown.
  */
 export function buildHighlightRegex(multiWordNames: readonly string[]): RegExp {
-  // Longest first so "Quick Policy Plus" wins over "Quick Policy".
-  const sorted = [...multiWordNames].sort((a, b) => b.length - a.length);
-  const alternates = sorted
-    .map(multiWordTagPattern)
-    .filter((p): p is string => p !== null);
-  const tagBody =
-    alternates.length > 0
-      ? `(?:${alternates.join("|")}|[A-Za-z][A-Za-z0-9_/-]*)`
-      : "[A-Za-z][A-Za-z0-9_/-]*";
-
   return new RegExp(
-    `(?<![A-Za-z0-9])(@[A-Za-z][A-Za-z0-9_-]*|#${tagBody})`,
+    `(?<![A-Za-z0-9])(@[A-Za-z][A-Za-z0-9_-]*|#${categoryTagBody(multiWordNames)})`,
     "g",
   );
 }

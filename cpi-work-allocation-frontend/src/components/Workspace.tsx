@@ -88,6 +88,54 @@ function normalizeDescription(desc: string, client: string): string {
     .trim();
 }
 
+/**
+ * Epic 3 — derive the collapsed activity-card header (bold title + muted
+ * subtitle preview) from the activity's work type and description.
+ *
+ * Two shapes:
+ *   • Multi-line description (a hierarchical block, e.g.
+ *       "#Training Work\n• & Development pilot testing\n• …"):
+ *     the FIRST line is the parent header/context the user typed and is used
+ *     verbatim as the card title — it must never be dropped or replaced by a
+ *     child bullet. The first child task becomes the subtitle preview.
+ *   • Single-line description (a simple entry, e.g. a Specific Enhancement
+ *     card): the Work Type leads as the title, with the description as the
+ *     subtitle preview.
+ *
+ * Bullet markers (•, *, -, --, –) are stripped from whichever line surfaces so
+ * the title never renders the broken "• using AWS ATHENA …" form.
+ */
+function deriveCardHeader(
+  workType: string,
+  description: string | undefined,
+  client: string,
+): { title: string; subtitle: string } {
+  const stripBullet = (s: string) => s.replace(/^(?:[-–•*]+)\s*/, "").trim();
+  const lines = normalizeDescription(description ?? "", client)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return { title: workType || "New Activity", subtitle: "" };
+  }
+
+  if (lines.length === 1) {
+    const only = stripBullet(lines[0]);
+    return workType
+      ? { title: workType, subtitle: only }
+      : { title: only || "New Activity", subtitle: "" };
+  }
+
+  // Multi-line: line[0] is the parent header/context → use it as the title
+  // ONLY. No child-bullet preview is appended (the bullets are visible in the
+  // expanded description).
+  return {
+    title: stripBullet(lines[0]) || workType || "New Activity",
+    subtitle: "",
+  };
+}
+
 // ── Leave / Holiday intercept (Epic 1) ─────────────────────────────────────
 // When a task description mentions a time-off keyword, force it into the
 // General Work → Others bucket and derive the Work Type from the specific
@@ -869,6 +917,11 @@ const Workspace = ({
                       {stream.activities.map((activity, aIdx) => {
                         const flag = flags?.[activity.id];
                         const isIncomplete = incompleteIds.has(activity.id);
+                        const cardHeader = deriveCardHeader(
+                          activity.workType,
+                          activity.description,
+                          activity.client,
+                        );
                         return (
                           <div
                             key={activity.id}
@@ -894,9 +947,7 @@ const Workspace = ({
                                   <ChevronRight className="h-3 w-3 shrink-0" />
                                 )}
                                 <span className="font-medium truncate">
-                                  {activity.workType ||
-                                    activity.description?.slice(0, 40) ||
-                                    "New Activity"}
+                                  {cardHeader.title}
                                 </span>
                                 {activity.subCategory && (
                                   <span
@@ -911,9 +962,9 @@ const Workspace = ({
                                     {activity.subCategory}
                                   </span>
                                 )}
-                                {activity.workType && activity.description && (
+                                {cardHeader.subtitle && (
                                   <span className="text-muted-foreground truncate max-w-[200px]">
-                                    — {normalizeDescription(activity.description, activity.client).split("\n")[0]}
+                                    — {cardHeader.subtitle}
                                   </span>
                                 )}
                                 <span className="text-primary font-semibold shrink-0">
