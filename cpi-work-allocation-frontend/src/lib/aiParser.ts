@@ -623,9 +623,11 @@ function extractBullets(text: string): ExtractedBullet[] {
 
     // Match both simple "- Text - 40%" and hierarchical "-- Text - 40%".
     // We don't distinguish them for AI parsing — each line is one
-    // activity if it has a percentage.
+    // activity if it has a percentage. The `%` is REQUIRED so a bullet whose
+    // text ends in a bare number (e.g. an SR ticket) is never misread as a
+    // percentage — the same defect that let `-- 41631` become 41631%.
     const m = line.match(
-      /^(?:[-–]{1,}|[•*])\s*(.+?)\s*[-–—:]\s*(\d+(?:\.\d+)?)\s*%?\s*$/,
+      /^(?:[-–]{1,}|[•*])\s*(.+?)\s*[-–—:]\s*(\d+(?:\.\d+)?)\s*%\s*$/,
     );
     if (!m) continue;
 

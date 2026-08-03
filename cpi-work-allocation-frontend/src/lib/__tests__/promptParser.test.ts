@@ -120,6 +120,47 @@ describe("parseWorkAllocation — hierarchical format", () => {
 });
 
 // ---------------------------------------------------------------------
+// Regression: bare-number bullet must not be read as a percentage
+// (the `-- 41631` bug that produced a 41637.53% ABIC card / 41731% ring)
+// ---------------------------------------------------------------------
+
+describe("parseWorkAllocation — bare-number bullet regression", () => {
+  it("ignores a bare SR number and uses only the trailing % (6.53)", () => {
+    const input = `@ABIC #Geniisys:
+-- support for
+-- 41631
+-- SA Deployment and testing
+-- SR 41631
+-- Test Annualized Amounts
+-- SR 39715
+-- Other QA queries and testings
+-- Bulletin and recreation
+-- Bulletin
+-- support
+-- Other query by sir Carl - 6.53%`;
+    const result = parseWorkAllocation(input, {
+      ...baseOptions,
+      knownClients: ["ABIC"],
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0].percentage).toBe(6.53);
+    // The bare number survives as description content, not a percentage.
+    expect(result[0].description).toContain("41631");
+  });
+
+  it("keeps a block percentage bounded even if bullets carry huge %", () => {
+    const input = `@ABIC #Geniisys:
+-- glitch - 41631%
+-- Other query - 6.53%`;
+    const result = parseWorkAllocation(input, {
+      ...baseOptions,
+      knownClients: ["ABIC"],
+    });
+    expect(result[0].percentage).toBeLessThanOrEqual(100);
+  });
+});
+
+// ---------------------------------------------------------------------
 // Structured format
 // ---------------------------------------------------------------------
 

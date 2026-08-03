@@ -68,6 +68,15 @@ export interface AllocationRecord {
 
 interface AllocationsContextType {
   records: AllocationRecord[];
+  /**
+   * True once the records list reflects a settled load — i.e. the first
+   * fetch has resolved (API mode) or the synchronous seed is in place
+   * (local mode). Consumers that must NOT act on an empty-because-still-
+   * loading list (notably the login reminder scheduler, which would
+   * otherwise mistake "not fetched yet" for "no allocation → nudge to
+   * submit") gate on this instead of on `records.length`.
+   */
+  isLoaded: boolean;
   getRecord: (employeeId: string, month: string, year: string) => AllocationRecord | undefined;
   upsertDraft: (
     rec: Omit<AllocationRecord, "status" | "flags"> & { status?: AllocationStatus },
@@ -912,6 +921,9 @@ const LocalAllocationsProvider = ({ children }: { children: ReactNode }) => {
     <AllocationsContext.Provider
       value={{
         records,
+        // Local mode seeds synchronously on mount, so records are always
+        // authoritative from the first render.
+        isLoaded: true,
         getRecord,
         upsertDraft,
         submitForReview,
@@ -986,7 +998,7 @@ const ApiAllocationsProvider = ({ children }: { children: ReactNode }) => {
   const qc = useQueryClient();
   const { currentUser } = useAuth();
 
-  const { data: apiRecords = [] } = useQuery({
+  const { data: apiRecords = [], isSuccess } = useQuery({
     queryKey: ["allocations"],
     queryFn: ({ signal }) => api.allocations.list(undefined, signal),
     enabled: !!currentUser,
@@ -994,6 +1006,11 @@ const ApiAllocationsProvider = ({ children }: { children: ReactNode }) => {
   });
 
   const records: AllocationRecord[] = apiRecords.map(fromApiRecord);
+
+  // Records are authoritative only after the first fetch has resolved.
+  // Until then `records` is an empty placeholder, which the reminder
+  // scheduler must not read as "this user has no allocation".
+  const isLoaded = isSuccess;
 
   const inv = useCallback(
     () => qc.invalidateQueries({ queryKey: ["allocations"] }),
@@ -1216,6 +1233,7 @@ const ApiAllocationsProvider = ({ children }: { children: ReactNode }) => {
     <AllocationsContext.Provider
       value={{
         records,
+        isLoaded,
         getRecord,
         upsertDraft,
         submitForReview,

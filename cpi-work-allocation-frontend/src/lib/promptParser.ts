@@ -26,6 +26,11 @@
  *   use them.
  */
 
+import {
+  extractLinePercent,
+  clampBlockPercentage,
+} from "./blockPercentage";
+
 // =====================================================================
 // Types
 // =====================================================================
@@ -671,8 +676,12 @@ const CLIENT_TAG_RE_INLINE = /(?<![A-Za-z0-9])@[A-Za-z][A-Za-z0-9_-]*/;
 // absorbed into that block — it's parsed as its own simple entry.
 const HIERARCHICAL_BULLET = /^(?:[-–]{2,}|[•*])\s/;
 const STRIP_LEADING_BULLET = /^(?:[-–]{1,}|[•*])\s*/;
-const TRAILING_PCT = /[-–—:]\s*(\d+(?:\.\d+)?)\s*%?\s*$/;
-const STRIP_TRAILING_PCT = /\s*[-–—:]\s*\d+(?:\.\d+)?\s*%?\s*$/;
+// Percentage extraction lives in ./blockPercentage (extractLinePercent). The
+// `%` sign is REQUIRED there so a bare number like `-- 41631` (a Service-
+// Request ticket missing its "SR " prefix) can never be read as 41631%.
+// STRIP_TRAILING_PCT mirrors that contract — it only strips a trailing token
+// that carries a literal `%`, so bare numbers survive as description text.
+const STRIP_TRAILING_PCT = /\s*[-–—:]\s*(?:\d+(?:\.\d+)?|\.\d+)\s*%\s*$/;
 
 const STRUCTURED_RE =
   /^[-•*]?\s*(.+?)\s*\(team\)\s*,\s*(.+?)\s*\(work\s*category\)\s*,\s*(.+?)\s*\(work\s*type\)\s*,\s*(.+?)\s*\(client\)\s*,\s*(.+?)\s*[-–—:]\s*(\d+(?:\.\d+)?)\s*%?\s*$/i;
@@ -835,9 +844,12 @@ export function parseWorkAllocation(
         }
         if (!HIERARCHICAL_BULLET.test(bLine)) break;
 
-        const pctMatch = bLine.match(TRAILING_PCT);
-        if (pctMatch) {
-          blockPercentage += parseFloat(pctMatch[1]);
+        // Only a token with a literal `%` counts as a percentage. Bare
+        // numbers / SR IDs (e.g. `-- 41631`) return null and are preserved as
+        // description text — never summed into the allocation.
+        const linePct = extractLinePercent(bLine);
+        if (linePct !== null) {
+          blockPercentage += linePct;
           bulletLines.push(
             bLine
               .replace(STRIP_TRAILING_PCT, "")
@@ -849,6 +861,12 @@ export function parseWorkAllocation(
         }
         j++;
       }
+
+      // Defence in depth: bound the summed block percentage so that even if a
+      // future parsing hole reappears, an anomaly like 41637 can never reach
+      // the Allocation Progress ring. Valid blocks (all well under 100) are
+      // unaffected.
+      blockPercentage = clampBlockPercentage(blockPercentage);
 
       if (bulletLines.length > 0) {
         // Client resolution priority, matching the simple-format branch:

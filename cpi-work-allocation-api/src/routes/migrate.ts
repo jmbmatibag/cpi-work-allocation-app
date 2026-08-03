@@ -5,9 +5,10 @@
  * and seeds the database. Idempotent — safe to call multiple times; existing
  * rows are upserted rather than duplicated.
  *
- * Protected by the MIGRATE_SECRET env var. If MIGRATE_SECRET is set, callers
- * must pass it as the `x-migrate-secret` request header. If the env var is
- * unset the endpoint is open — set it in production before deploying.
+ * Protected by the MIGRATE_SECRET env var (fail-closed). The endpoint is
+ * DISABLED unless MIGRATE_SECRET is set, and callers must pass the matching
+ * value as the `x-migrate-secret` request header. A missing env var no longer
+ * opens the endpoint — it refuses every request with 403.
  *
  * Expected request body:
  * {
@@ -39,10 +40,13 @@ const STATUS_MAP: Record<string, AllocationStatus> = {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 router.post('/', async (req: any, res: any, next: any) => {
   try {
-    // ── Auth ────────────────────────────────────────────────────────────────
+    // ── Auth (fail-closed) ────────────────────────────────────────────────
+    // The endpoint is off unless MIGRATE_SECRET is configured AND the caller
+    // presents the matching header. Previously a missing env var left the
+    // route wide open (unauthenticated user/allocation writes); it now refuses.
     const secret = process.env.MIGRATE_SECRET;
-    if (secret && req.headers['x-migrate-secret'] !== secret) {
-      res.status(401).json({ error: 'Unauthorized — set x-migrate-secret header' });
+    if (!secret || req.headers['x-migrate-secret'] !== secret) {
+      res.status(403).json({ error: 'Forbidden' });
       return;
     }
 

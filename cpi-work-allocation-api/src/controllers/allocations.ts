@@ -30,6 +30,7 @@ import {
 import {
   createNotification,
   createNotificationsForUsers,
+  markSubmitRemindersRead,
 } from '../lib/notificationService.js';
 import {
   buildAllocationScopeFilter,
@@ -98,8 +99,12 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
     where: { employeeId_month_year: { employeeId: d.employeeId, month: d.month, year: d.year } },
   });
 
-  if (existing?.status === 'Approved') {
-    res.status(409).json({ error: 'Cannot overwrite an approved allocation' });
+  // Only Draft / NeedsRevision records are editable by a draft autosave. A
+  // submitted (PendingReview) or Approved record must never be overwritten by
+  // a late background save. This is the fast-path check; the authoritative,
+  // race-proof guard lives inside the transaction below.
+  if (existing && !['Draft', 'NeedsRevision'].includes(existing.status)) {
+    res.status(409).json({ error: 'Cannot overwrite a submitted or approved allocation' });
     return;
   }
 
@@ -108,7 +113,9 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
   const recordId = existing?.id ?? generateAllocationId(d.year);
   const activities = flattenStreams(d.streams as unknown as StreamsInput);
 
-  const record = await prisma.$transaction(async (tx) => {
+  let record;
+  try {
+    record = await prisma.$transaction(async (tx) => {
     if (existing) {
       // Preserve manager flags across a draft autosave. An employee revising a
       // returned allocation triggers this upsert on every card edit, and the
@@ -124,13 +131,23 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
       });
       const flagById = new Map(priorFlags.map((f) => [f.id, f]));
 
+      // Atomic TOCTOU guard. Re-assert editability AS PART OF the write:
+      // updateMany with a status predicate acquires the row lock and matches
+      // zero rows if a concurrent submit/approve moved the record out of an
+      // editable state between our earlier read and now. On a miss we abort
+      // (→409) instead of clobbering submitted or approved content. This also
+      // applies the scalar field updates, so the activity replacement below
+      // only needs to touch the activity rows.
+      const guarded = await tx.allocationRecord.updateMany({
+        where: { id: existing.id, status: { in: ['Draft', 'NeedsRevision'] } },
+        data: { team: d.team, managerId, monthIndex: d.monthIndex },
+      });
+      if (guarded.count === 0) throw new ConcurrentActionError();
+
       await tx.allocationActivity.deleteMany({ where: { recordId: existing.id } });
       await tx.allocationRecord.update({
         where: { id: existing.id },
         data: {
-          team: d.team,
-          managerId,
-          monthIndex: d.monthIndex,
           activities: {
             // Re-apply a flag only when the same activity id survives the edit.
             // A card the employee deleted drops its flag naturally (no matching
@@ -164,7 +181,16 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
         include: INCLUDE_FULL,
       });
     }
-  });
+    });
+  } catch (err) {
+    if (err instanceof ConcurrentActionError) {
+      // A concurrent submit/approve won the race — the record is no longer
+      // an editable draft. Surface a clean 409 rather than clobbering it.
+      res.status(409).json({ error: 'Cannot overwrite a submitted or approved allocation' });
+      return;
+    }
+    throw err;
+  }
 
   res.status(existing ? 200 : 201).json(toFrontendRecord(record));
 }
@@ -440,6 +466,11 @@ export async function submit(req: AuthRequest, res: Response): Promise<void> {
 
   res.json(toFrontendRecord(updated));
 
+  // Epic 2 (same defect family) — the employee has now submitted, so their
+  // own "please submit" reminder for this period is stale. Clear it so the
+  // nudge doesn't linger behind a PendingReview record. Fire-and-forget.
+  void markSubmitRemindersRead(updated.employeeId, updated.month, updated.year);
+
   // Notify the live manager that a new submission is waiting for
   // review. `liveManager` was resolved from the User table above so
   // the email follows the CURRENT org chart, not the record's
@@ -641,6 +672,15 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
     return;
   }
 
+  // Legal-transition guard (unconditional). An approval is only ever valid
+  // from PendingReview — enforced independently of the OPTIONAL expectedStatus
+  // token. Without this, omitting expectedStatus disabled the status predicate
+  // and let a Draft be approved, or an Approved record be re-approved.
+  if (record.status !== 'PendingReview') {
+    res.status(409).json({ error: `Cannot approve from status "${record.status}"` });
+    return;
+  }
+
   // Capture the status BEFORE the approval so the Epic 3 completion hook
   // can tell a genuine →Approved transition from a redundant re-approval.
   const priorStatus = record.status;
@@ -657,15 +697,16 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
   let updated;
   try {
     updated = await prisma.$transaction(async (tx) => {
-      // Concurrency guard (authoritative path). Scope the write to the
-      // expected status so two managers clicking "Approve" at the same
-      // instant can't both win: whoever commits first flips the status, and
-      // the loser's updateMany matches zero rows. `updateMany` (not `update`)
-      // because `update` throws on a where-miss with a status predicate;
-      // count-zero lets us translate cleanly to a 409.
-      const guard = body.expectedStatus ? { status: body.expectedStatus } : {};
+      // Concurrency + legal-source guard (authoritative path). Scope the write
+      // to the only legal source status — PendingReview — so it doubles as the
+      // race guard: whoever commits first flips the status, and any later
+      // approve/return sees a non-PendingReview row and matches zero rows.
+      // `updateMany` (not `update`) because `update` throws on a where-miss;
+      // count-zero lets us translate cleanly to a 409. Hardcoding the status
+      // (rather than trusting the optional client token) is what closes the
+      // bypass — a client can no longer name a status that legalises a Draft.
       const result = await tx.allocationRecord.updateMany({
-        where: { id: record.id, ...guard },
+        where: { id: record.id, status: 'PendingReview' },
         data: {
           status: 'Approved',
           reviewedAt: new Date(),
@@ -707,6 +748,12 @@ export async function approve(req: AuthRequest, res: Response): Promise<void> {
     type: 'success',
     actionUrl: '/allocations',
   });
+
+  // Epic 2 — the allocation is now Approved, so any lingering "please submit"
+  // reminder in the employee's tray for this exact period is stale. Clear it
+  // immediately so the bell reflects reality the moment approval lands.
+  // Fire-and-forget: a cleanup miss must never fail the approval just made.
+  void markSubmitRemindersRead(updated.employeeId, updated.month, updated.year);
 
   // Notify the employee that their allocation was approved. The actor name
   // (who ACTUALLY clicked Approve) is injected so a peer-covered approval
@@ -770,6 +817,14 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
     return;
   }
 
+  // Legal-transition guard (unconditional) — a return-for-revision is only
+  // valid from PendingReview, enforced independently of the optional
+  // expectedStatus token so a missing token can't re-open an Approved record.
+  if (record.status !== 'PendingReview') {
+    res.status(409).json({ error: `Cannot return from status "${record.status}"` });
+    return;
+  }
+
   // Peer Coverage accountability — stamp the user who ACTUALLY returned it.
   const actor = await prisma.user.findUniqueOrThrow({
     where: { id: req.userId! },
@@ -793,11 +848,12 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
   let updated;
   try {
     updated = await prisma.$transaction(async (tx) => {
-      // Concurrency guard (authoritative path) — scope the write to the
-      // expected status so a simultaneous approve/return can't both land.
-      const guard = body.expectedStatus ? { status: body.expectedStatus } : {};
+      // Concurrency + legal-source guard (authoritative path) — scope the write
+      // to the only legal source status (PendingReview) so a simultaneous
+      // approve/return can't both land and an illegal source can't slip through
+      // when the optional expectedStatus token is omitted.
       const result = await tx.allocationRecord.updateMany({
-        where: { id: record.id, ...guard },
+        where: { id: record.id, status: 'PendingReview' },
         data: {
           status: 'NeedsRevision',
           reviewedAt: new Date(),

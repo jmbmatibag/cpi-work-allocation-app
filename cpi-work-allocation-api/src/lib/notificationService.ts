@@ -108,3 +108,59 @@ export async function markAllRead(userId: string): Promise<number> {
   });
   return result.count;
 }
+
+/**
+ * Content token every "please submit your allocation" reminder embeds — the
+ * stable phrase the client scheduler writes (`useNotificationScheduler`) and
+ * the anchor we match on for cleanup. The `Notification` table carries no
+ * structured allocation/period linkage (title + message only), so a reminder
+ * can only be tied back to its allocation by the phrase + the "{Month} {Year}"
+ * period token both live in the message body.
+ */
+const SUBMIT_REMINDER_TOKEN = 'submit your work allocation';
+
+/**
+ * Epic 2 — clear stale "Action Required: submit your allocation" reminders the
+ * moment the underlying allocation stops needing a submit (it was approved, or
+ * — see the submit handler — the employee has now submitted it).
+ *
+ * Scoped THREE ways so it can never clear an unrelated nudge:
+ *   1. `targetUserId` — only this employee's tray.
+ *   2. the submit-reminder phrase — never touches manager "Pending Actions"
+ *      or the Finance "Overdue Work Allocations" reminder, which are about a
+ *      whole team, not this one allocation.
+ *   3. the "{Month} {Year}" period token — reminders for other periods stand.
+ *
+ * Best-effort: a cleanup failure must never fail the approval/submit that
+ * triggered it, so the error is swallowed-with-a-log and the caller `void`s it.
+ * Returns the number of reminders cleared.
+ */
+export async function markSubmitRemindersRead(
+  targetUserId: string,
+  month: string,
+  year: string,
+): Promise<number> {
+  try {
+    const result = await prisma.notification.updateMany({
+      where: {
+        targetUserId,
+        isRead: false,
+        // Both tokens must be present. Prisma requires distinct `message`
+        // predicates to be ANDed explicitly (one key per object).
+        AND: [
+          { message: { contains: SUBMIT_REMINDER_TOKEN } },
+          { message: { contains: `${month} ${year}` } },
+        ],
+      },
+      data: { isRead: true },
+    });
+    return result.count;
+  } catch (err) {
+    console.warn(
+      `[notifications] failed to clear submit reminders for ${targetUserId} ` +
+      `(${month} ${year}):`,
+      (err as Error).message,
+    );
+    return 0;
+  }
+}
