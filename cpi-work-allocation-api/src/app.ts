@@ -13,6 +13,7 @@ import managersRouter from './routes/managers.js';
 import allocationsRouter from './routes/allocations.js';
 import journalRouter from './routes/journal.js';
 import notificationsRouter from './routes/notifications.js';
+import maintenanceRouter from './routes/maintenance.js';
 import migrateRouter from './routes/migrate.js';
 
 // Global guard: 120 requests/min per IP across all API routes.
@@ -82,6 +83,7 @@ export function createApp() {
   app.use('/api/allocations', allocationsRouter);
   app.use('/api/journal', journalRouter);
   app.use('/api/notifications', notificationsRouter);
+  app.use('/api/maintenance', maintenanceRouter);
   app.use('/api/migrate', migrateRouter);
 
   app.use(errorHandler);

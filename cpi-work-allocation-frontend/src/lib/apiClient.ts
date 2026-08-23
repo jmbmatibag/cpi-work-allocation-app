@@ -210,6 +210,22 @@ function clearLocalStoragePreservingTheme(): void {
   }
 }
 
+/**
+ * Mirror of the server-owned maintenance switch, kept current by
+ * useMaintenanceStatus. Module-level because the 401 handler below is plain
+ * async code with no access to React state.
+ *
+ * While maintenance is on, a 401 must NOT wipe localStorage or fire the
+ * session-expired modal: a signed-out visitor sitting on the announcement
+ * would otherwise get a blocking "Sign In Again" dialog over it and be
+ * bounced to /login — straight past the notice they're meant to read.
+ */
+let maintenanceActive = false;
+
+export function setMaintenanceActive(active: boolean): void {
+  maintenanceActive = active;
+}
+
 let isRefreshing = false;
 let refreshPromise: Promise<boolean> | null = null;
 
@@ -281,8 +297,8 @@ async function request<T>(
       // legitimately accessible without a session (setup-password and
       // reset-password tokens arrive via email to unauthenticated users).
       if (res.status === 401) {
-        const PUBLIC_PATHS = ['/login', '/setup-password', '/reset-password'];
-        if (!PUBLIC_PATHS.includes(window.location.pathname)) {
+        const PUBLIC_PATHS = ['/login', '/setup-password', '/reset-password', '/maintenance'];
+        if (!maintenanceActive && !PUBLIC_PATHS.includes(window.location.pathname)) {
           clearLocalStoragePreservingTheme();
           // Fire a DOM event so the SessionExpiredModal can show a message
           // before the redirect happens. The modal owns the navigation.
@@ -689,6 +705,39 @@ const notifications = {
 };
 
 // ---------------------------------------------------------------------------
+// Maintenance mode
+// ---------------------------------------------------------------------------
+
+export interface ApiMaintenanceStatus {
+  enabled: boolean;
+  title: string;
+  message: string;
+  /** ISO-8601, or null when the window is open-ended. */
+  startsAt: string | null;
+  endsAt: string | null;
+  updatedAt: string;
+  updatedByName: string | null;
+}
+
+const maintenance = {
+  // PUBLIC — resolves for signed-out visitors too, so the gate can render the
+  // announcement before anyone has a session. Polled on an interval by
+  // useMaintenanceStatus.
+  status: (signal?: AbortSignal) =>
+    get<ApiMaintenanceStatus>('/api/maintenance', signal),
+
+  // Admin only. Partial patch — omit a field to keep its stored value, send
+  // null on the timestamps to clear the window.
+  update: (body: {
+    enabled: boolean;
+    title?: string;
+    message?: string;
+    startsAt?: string | null;
+    endsAt?: string | null;
+  }) => put<ApiMaintenanceStatus>('/api/maintenance', body),
+};
+
+// ---------------------------------------------------------------------------
 // Migration (one-time: localStorage blob → DB)
 // ---------------------------------------------------------------------------
 
@@ -701,4 +750,4 @@ const migrate = {
 // Exported namespace
 // ---------------------------------------------------------------------------
 
-export const api = { auth, employees, managers, allocations, journal, settings, notifications, migrate };
+export const api = { auth, employees, managers, allocations, journal, settings, notifications, maintenance, migrate };

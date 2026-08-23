@@ -28,6 +28,7 @@ import {
   Upload,
   Copy,
   AlertTriangle,
+  Construction,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +65,7 @@ import { useAIConfig } from "@/contexts/AIConfigContext";
 import { testApiKey } from "@/lib/aiParser";
 import InferenceRulesEditor from "@/components/InferenceRulesEditor";
 import EmailSettingsConfig from "@/components/EmailSettingsConfig";
+import MaintenanceSettingsPanel from "@/components/MaintenanceSettingsPanel";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { toast } from "sonner";
 import Papa from "papaparse";
@@ -81,7 +83,14 @@ const PAGE_SIZE = 10;
 // Types
 // =====================================================================
 
-type TabKey = "teams" | "clients" | "taxonomy" | "ai" | "inference" | "email";
+type TabKey =
+  | "teams"
+  | "clients"
+  | "taxonomy"
+  | "ai"
+  | "inference"
+  | "email"
+  | "maintenance";
 type TaxonomyView = "outline" | "main" | "sub" | "workType";
 type SortDirection = "asc" | "desc";
 
@@ -534,6 +543,7 @@ const AdminSettings = () => {
     { key: "ai"        as TabKey, label: "AI",       icon: Sparkles,  count: 0,                     visible: false },
     { key: "inference" as TabKey, label: "Inference Rules", icon: TagIcon, count: 0, visible: SHOW_INFERENCE_RULES_TAB },
     { key: "email"     as TabKey, label: "Email",          icon: Mail,    count: 0, visible: true },
+    { key: "maintenance" as TabKey, label: "Maintenance",  icon: Construction, count: 0, visible: true },
   ];
 
   const taxonomyViews: Array<{ key: TaxonomyView; label: string; icon: typeof Folder }> = [
@@ -807,6 +817,8 @@ const AdminSettings = () => {
         {activeTab === "ai" && <AISettingsPanel />}
 
         {activeTab === "email" && <EmailSettingsConfig />}
+
+        {activeTab === "maintenance" && <MaintenanceSettingsPanel />}
 
         {activeTab === "inference" && (
           <div className="rounded-xl p-6 bg-card border border-border">

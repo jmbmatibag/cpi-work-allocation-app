@@ -421,3 +421,35 @@ model InferenceRule {
   @@index([subCategoryId])
   @@index([workTypeId])
 }
+
+// ── Operations ───────────────────────────────────────────────────────────────
+
+// Maintenance mode. SINGLETON: exactly one row, always id = 1 — seeded by the
+// migration so GET /api/maintenance is a plain findUnique that can never miss.
+// Admins flip `enabled` from Settings → Maintenance; every client polls the
+// public GET and swaps the whole app for the announcement page when it's on.
+//
+// Deliberately NOT an env var: flipping it must not require a rebuild + PM2
+// reload, which is exactly the thing you can't do mid-incident.
+model MaintenanceSetting {
+  id      Int     @id @default(1)
+  enabled Boolean @default(false)
+
+  // Copy rendered on the announcement page. Stored (not hardcoded) so the
+  // message can name the actual window and work being done.
+  title   String @default("Scheduled Maintenance")
+  message String @default("The CPI Work Allocation app is temporarily unavailable while we perform scheduled maintenance. Please check back shortly.")
+
+  // Optional window. `endsAt` drives the "Expected back by" line; both are
+  // null when the maintenance is open-ended.
+  startsAt DateTime?
+  endsAt   DateTime?
+
+  // Who last flipped it. Denormalised to a plain id + name rather than an FK:
+  // this is a display stamp on the settings panel, and it should survive the
+  // admin's account being deleted. The authoritative trail is AuditLog
+  // (action: 'maintenance-update', entity: 'MaintenanceSetting').
+  updatedById   String?
+  updatedByName String?
+  updatedAt     DateTime @updatedAt
+}

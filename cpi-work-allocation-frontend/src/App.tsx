@@ -12,6 +12,7 @@ import { ClientsConfigProvider } from "@/contexts/ClientsConfigContext";
 import { AIConfigProvider } from "@/contexts/AIConfigContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 import AuthenticatedLayout from "@/layouts/AuthenticatedLayout";
+import MaintenanceGate from "@/components/MaintenanceGate";
 import ProtectedRoute from "@/routes/ProtectedRoute";
 import PublicOnlyRoute from "@/routes/PublicOnlyRoute";
 import RoleHomeRedirect from "@/routes/RoleHomeRedirect";
@@ -20,6 +21,7 @@ import Login from "@/pages/Login";
 import SetupPassword from "@/pages/SetupPassword";
 import ResetPassword from "@/pages/ResetPassword";
 import HelpGuides from "@/pages/HelpGuides";
+import Maintenance from "@/pages/Maintenance";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -29,12 +31,18 @@ const queryClient = new QueryClient();
  *
  * Structure:
  *   /login               -> PublicOnlyRoute  (authed users bounce home)
+ *   /maintenance         -> public announcement page (always reachable)
  *   /, /dashboard, ...   -> ProtectedRoute   (auth required)
  *                           + domain providers
  *                           + AuthenticatedLayout shell
  *                           -> per-route RBAC guard -> page
  *   *                    -> NotFound (rendered inside the shell when
  *                                     authed, bounced to /login when not)
+ *
+ * MaintenanceGate wraps every route (inside BrowserRouter so it can read the
+ * path, inside AuthProvider so it can read roles). When maintenance mode is
+ * on it swaps the whole app for the announcement page — except for Admins
+ * and the always-allowed public paths listed in the gate.
  *
  * Provider nesting:
  *   EmployeesProvider     (editable user directory — must wrap
@@ -67,6 +75,7 @@ const App = () => (
       <EmployeesProvider>
         <AuthProvider>
           <BrowserRouter>
+            <MaintenanceGate>
             <Routes>
               {/* Public */}
               <Route
@@ -94,6 +103,16 @@ const App = () => (
                 they click the link). Same rationale as /setup-password above.
               */}
               <Route path="/reset-password" element={<ResetPassword />} />
+
+              {/*
+                Maintenance announcement. Fully public and always reachable —
+                MaintenanceGate serves this same page in place of every other
+                route while maintenance mode is on, and an Admin can open
+                /maintenance directly to preview the copy before flipping the
+                switch. Never wrapped in a guard: a signed-out visitor whose
+                first request lands here has to see it.
+              */}
+              <Route path="/maintenance" element={<Maintenance />} />
 
               {/* Authenticated shell: auth guard + providers + layout */}
               <Route
@@ -142,6 +161,7 @@ const App = () => (
                 <Route path="*" element={<NotFound />} />
               </Route>
             </Routes>
+            </MaintenanceGate>
           </BrowserRouter>
         </AuthProvider>
       </EmployeesProvider>

@@ -17,4 +17,5 @@ export * from './schemas/employees.js';
 export * from './schemas/managers.js';
 export * from './schemas/journal.js';
 export * from './schemas/settings.js';
+export * from './schemas/maintenance.js';
 //# sourceMappingURL=index.d.ts.map
