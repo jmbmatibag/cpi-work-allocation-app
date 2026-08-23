@@ -6,7 +6,7 @@ import { useMaintenanceStatus } from "@/hooks/useMaintenanceStatus";
 
 // Shown as the "anything urgent" contact. Change this to whichever inbox
 // should field questions during a window.
-const SUPPORT_EMAIL = "support@cpi.com.ph";
+const SUPPORT_EMAIL = "platforms.ticket@cpi.com.ph";
 
 const DEFAULT_TITLE = "Scheduled Maintenance";
 const DEFAULT_MESSAGE =
