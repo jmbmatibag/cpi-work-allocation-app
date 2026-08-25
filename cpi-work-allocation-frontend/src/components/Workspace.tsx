@@ -341,6 +341,7 @@ const Workspace = ({
     workTypesForParent,
     inferenceRules,
     sharedClientList,
+    clientsByParent,
   } = useClientsConfig();
   const { config: aiConfig, isAIAvailable } = useAIConfig();
 
@@ -397,26 +398,24 @@ const Workspace = ({
       }
     }
 
-    // Scenario A — Project-Client relationship map.
-    // Derived from SubCategory.clients[] configured in Admin Settings.
-    // The rule parser reads this to fan out a #SubCat entry (with no
-    // explicit @client) across every client assigned to that project,
-    // splitting the percentage equally.  Only sub-categories that have
-    // at least one client configured contribute an entry here.
-    const clientsBySubCategory: Record<string, readonly string[]> = {};
-    for (const sub of subCategories) {
-      if (sub.clients && sub.clients.length > 0) {
-        clientsBySubCategory[sub.name] = sub.clients;
-      }
-    }
-
+    // Scenario A — Project-Client relationship map, keyed by taxonomy
+    // PARENT rather than strictly by sub-category. The rule parser reads
+    // this to fan out a #Project entry (with no explicit @client) across
+    // every client assigned to that project, splitting the percentage
+    // equally.
+    //
+    // `clientsByParent` covers both tiers: a project that still lives
+    // under a parent main is keyed by its sub-category name, and a
+    // flattened project (its own main, no sub tier) is keyed by its main
+    // category name. Keying on one tier only would silently drop the
+    // fan-out for the other — one card instead of three, no error.
     return {
       subCategoryToMain,
       defaultWorkTypeByParent,
       workTypesByParent,
-      clientsBySubCategory,
+      clientsBySubCategory: clientsByParent,
     };
-  }, [categories, subCategories, workTypes, subCategoriesForMain]);
+  }, [categories, subCategories, workTypes, subCategoriesForMain, clientsByParent]);
 
   const [deleteTarget, setDeleteTarget] = useState<{
     type: "stream" | "activity";

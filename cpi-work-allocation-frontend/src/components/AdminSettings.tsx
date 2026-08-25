@@ -1298,6 +1298,182 @@ const MainCategoryBlock = ({
 // Flat tables (copied verbatim from Turn 5 — structure unchanged)
 // =====================================================================
 
+/** Stable empty roster so the effect below doesn't re-fire every render. */
+const EMPTY_CLIENTS: readonly string[] = [];
+
+/**
+ * Client-roster picker, shared by the sub-category and main-category rows.
+ *
+ * A roster hangs off whichever tier actually owns the project: a sub
+ * category when its main still has a sub tier, or the main category itself
+ * once that project has been flattened into its own main. The two rows are
+ * otherwise identical, so the picker takes the target name and a plain
+ * value/onChange pair rather than knowing which tier it is editing.
+ */
+const AssignClientsPopover = ({
+  targetName,
+  current,
+  onChange,
+}: {
+  targetName: string;
+  current: readonly string[];
+  onChange: (next: string[]) => void;
+}) => {
+  const cc = useClientsConfig();
+  const [open, setOpen] = useState(false);
+  const [assigned, setAssigned] = useState<string[]>([...current]);
+  const [clientQuery, setClientQuery] = useState("");
+
+  // Re-sync when the server round-trip lands, so the checkmarks reflect
+  // persisted state rather than the last optimistic toggle.
+  useEffect(() => { setAssigned([...current]); }, [current]);
+
+  const visibleClients = useMemo(() => {
+    const q = clientQuery.trim().toLowerCase();
+    const sorted = [...cc.clients].sort();
+    return q ? sorted.filter((c) => c.toLowerCase().includes(q)) : sorted;
+  }, [cc.clients, clientQuery]);
+
+  const toggleClient = (client: string) => {
+    const next = assigned.includes(client)
+      ? assigned.filter((c) => c !== client)
+      : [...assigned, client];
+    setAssigned(next);
+    onChange(next);
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Assign clients to ${targetName}`}
+          title={`Assign clients to ${targetName}`}
+          className="flex items-center justify-center rounded-md transition-colors w-7 h-7"
+          style={{ color: "hsl(var(--primary))" }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "hsl(var(--primary-pastel))"; e.currentTarget.style.color = "hsl(var(--primary))"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "hsl(var(--primary))"; }}
+        >
+          <Link2 className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 p-0" align="end">
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
+          <h4 className="text-sm font-medium leading-none">Assign Clients</h4>
+          <span className="text-[11px] text-muted-foreground">
+            {assigned.length} of {cc.clients.length} selected
+          </span>
+        </div>
+
+        {cc.clients.length === 0 ? (
+          <p className="px-3 py-3 text-[12px] text-muted-foreground">
+            No clients configured yet.
+          </p>
+        ) : (
+          <>
+          <div className="px-2.5 pt-2.5 pb-1.5">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                autoFocus
+                placeholder="Search clients…"
+                value={clientQuery}
+                onChange={(e) => setClientQuery(e.target.value)}
+                className="h-8 pl-8 text-[13px]"
+              />
+            </div>
+          </div>
+          <div className="max-h-56 overflow-y-auto py-1">
+            {visibleClients.length === 0 && (
+              <p className="px-3 py-2 text-[12px] text-muted-foreground">
+                No clients match “{clientQuery}”.
+              </p>
+            )}
+            {visibleClients.map((client) => {
+              const isAssigned = assigned.includes(client);
+              return (
+                <button
+                  key={client}
+                  type="button"
+                  onClick={() => toggleClient(client)}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors text-foreground"
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(var(--muted))")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <div className="w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors"
+                    style={{
+                      background: isAssigned ? "hsl(var(--primary))" : "transparent",
+                      border: isAssigned ? "1px solid hsl(var(--primary))" : "1px solid hsl(var(--border))",
+                      color: "hsl(0 0% 100%)",
+                    }}>
+                    {isAssigned && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
+                  </div>
+                  <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="font-medium">{client}</span>
+                </button>
+              );
+            })}
+          </div>
+          </>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+};
+
+/**
+ * One main-category row. A component rather than inline JSX because the
+ * roster picker owns hook state, which can't live inside a .map().
+ */
+const MainCategoryRow = ({
+  name, subCount, wtCount, onOpenEdit, onDelete,
+}: {
+  name: string;
+  subCount: number;
+  wtCount: number;
+  onOpenEdit: (name: string) => void;
+  onDelete: (name: string) => void;
+}) => {
+  const cc = useClientsConfig();
+  const roster = cc.clientsByParent[name] ?? EMPTY_CLIENTS;
+
+  return (
+    <li className="group grid grid-cols-[1fr_120px_120px_80px] items-center gap-4 px-5 py-3">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center justify-center w-7 h-7 rounded-md shrink-0"
+          style={{ background: "hsl(var(--primary-pastel))", color: "hsl(var(--primary))" }}>
+          <Folder className="h-3.5 w-3.5" />
+        </div>
+        <button onClick={() => onOpenEdit(name)}
+          className="text-[14px] font-medium truncate text-left text-foreground">
+          {name}
+        </button>
+      </div>
+      <span className="text-[13px] text-right tabular-nums"
+        style={{ color: subCount > 0 ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>{subCount}</span>
+      <span className="text-[13px] text-right tabular-nums"
+        style={{ color: wtCount > 0 ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>{wtCount}</span>
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
+        {/*
+          The roster lives on whichever tier owns the project. A main WITH
+          subs delegates to those subs, so showing a picker here as well
+          would give one project two competing rosters.
+        */}
+        {subCount === 0 && (
+          <AssignClientsPopover
+            targetName={name}
+            current={roster}
+            onChange={(next) => cc.setMainCategoryClients(name, next)}
+          />
+        )}
+        <IconButton onClick={() => onOpenEdit(name)} label={`Edit ${name}`} variant="neutral"><Pencil className="h-3.5 w-3.5" /></IconButton>
+        <IconButton onClick={() => onDelete(name)} label={`Delete ${name}`} variant="danger"><Trash2 className="h-3.5 w-3.5" /></IconButton>
+      </div>
+    </li>
+  );
+};
+
 interface MainCategoriesTableProps {
   rows: readonly string[]; totalRows: number;
   page: number; onPageChange: (p: number) => void;
@@ -1326,32 +1502,16 @@ const MainCategoriesTable = ({
         <span></span>
       </div>
       <ul className="divide-y divide-border">
-        {rows.map((name) => {
-          const subCount = subCategoriesForMain(name).length;
-          const wtCount = workTypes.filter((w) => w.parents.includes(name)).length;
-          return (
-            <li key={name} className="group grid grid-cols-[1fr_120px_120px_80px] items-center gap-4 px-5 py-3">
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="flex items-center justify-center w-7 h-7 rounded-md shrink-0"
-                  style={{ background: "hsl(var(--primary-pastel))", color: "hsl(var(--primary))" }}>
-                  <Folder className="h-3.5 w-3.5" />
-                </div>
-                <button onClick={() => onOpenEdit(name)}
-                  className="text-[14px] font-medium truncate text-left text-foreground">
-                  {name}
-                </button>
-              </div>
-              <span className="text-[13px] text-right tabular-nums"
-                style={{ color: subCount > 0 ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>{subCount}</span>
-              <span className="text-[13px] text-right tabular-nums"
-                style={{ color: wtCount > 0 ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>{wtCount}</span>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
-                <IconButton onClick={() => onOpenEdit(name)} label={`Edit ${name}`} variant="neutral"><Pencil className="h-3.5 w-3.5" /></IconButton>
-                <IconButton onClick={() => onDelete(name)} label={`Delete ${name}`} variant="danger"><Trash2 className="h-3.5 w-3.5" /></IconButton>
-              </div>
-            </li>
-          );
-        })}
+        {rows.map((name) => (
+          <MainCategoryRow
+            key={name}
+            name={name}
+            subCount={subCategoriesForMain(name).length}
+            wtCount={workTypes.filter((w) => w.parents.includes(name)).length}
+            onOpenEdit={onOpenEdit}
+            onDelete={onDelete}
+          />
+        ))}
       </ul>
       <PaginationFooter page={page} onPageChange={onPageChange} totalItems={totalRows} />
     </div>
@@ -1367,27 +1527,7 @@ const SubCategoryRow = ({
   onDelete: (name: string) => void;
 }) => {
   const cc = useClientsConfig();
-  const [open, setOpen] = useState(false);
-  const [assigned, setAssigned] = useState<string[]>(sub.clients ?? []);
-  const [clientQuery, setClientQuery] = useState("");
-
-  useEffect(() => { setAssigned(sub.clients ?? []); }, [sub.clients]);
-
-  const visibleClients = useMemo(() => {
-    const q = clientQuery.trim().toLowerCase();
-    const sorted = [...cc.clients].sort();
-    return q ? sorted.filter((c) => c.toLowerCase().includes(q)) : sorted;
-  }, [cc.clients, clientQuery]);
-
   const wtCount = workTypes.filter((w) => w.parents.includes(sub.name)).length;
-
-  const toggleClient = (client: string) => {
-    const next = assigned.includes(client)
-      ? assigned.filter((c) => c !== client)
-      : [...assigned, client];
-    setAssigned(next);
-    cc.setSubCategoryClients(sub.name, next);
-  };
 
   return (
     <li className="group grid grid-cols-[1fr_1fr_120px_112px] items-center gap-4 px-5 py-3">
@@ -1405,82 +1545,11 @@ const SubCategoryRow = ({
       <span className="text-[13px] text-right tabular-nums"
         style={{ color: wtCount > 0 ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))" }}>{wtCount}</span>
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity justify-end">
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label={`Assign clients to ${sub.name}`}
-              title={`Assign clients to ${sub.name}`}
-              className="flex items-center justify-center rounded-md transition-colors w-7 h-7"
-              style={{ color: "hsl(var(--primary))" }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "hsl(var(--primary-pastel))"; e.currentTarget.style.color = "hsl(var(--primary))"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "hsl(var(--primary))"; }}
-            >
-              <Link2 className="h-3.5 w-3.5" />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent className="w-72 p-0" align="end">
-            {/* Header */}
-            <div className="flex items-center justify-between px-3 py-2.5 border-b border-border">
-              <h4 className="text-sm font-medium leading-none">Assign Clients</h4>
-              <span className="text-[11px] text-muted-foreground">
-                {assigned.length} of {cc.clients.length} selected
-              </span>
-            </div>
-
-            {cc.clients.length === 0 ? (
-              <p className="px-3 py-3 text-[12px] text-muted-foreground">
-                No clients configured yet.
-              </p>
-            ) : (
-              <>
-              <div className="px-2.5 pt-2.5 pb-1.5">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <Input
-                    autoFocus
-                    placeholder="Search clients…"
-                    value={clientQuery}
-                    onChange={(e) => setClientQuery(e.target.value)}
-                    className="h-8 pl-8 text-[13px]"
-                  />
-                </div>
-              </div>
-              <div className="max-h-56 overflow-y-auto py-1">
-                {visibleClients.length === 0 && (
-                  <p className="px-3 py-2 text-[12px] text-muted-foreground">
-                    No clients match “{clientQuery}”.
-                  </p>
-                )}
-                {visibleClients.map((client) => {
-                  const isAssigned = assigned.includes(client);
-                  return (
-                    <button
-                      key={client}
-                      type="button"
-                      onClick={() => toggleClient(client)}
-                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-[13px] transition-colors text-foreground"
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "hsl(var(--muted))")}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                    >
-                      <div className="w-4 h-4 rounded flex items-center justify-center shrink-0 transition-colors"
-                        style={{
-                          background: isAssigned ? "hsl(var(--primary))" : "transparent",
-                          border: isAssigned ? "1px solid hsl(var(--primary))" : "1px solid hsl(var(--border))",
-                          color: "hsl(0 0% 100%)",
-                        }}>
-                        {isAssigned && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
-                      </div>
-                      <Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="font-medium">{client}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              </>
-            )}
-          </PopoverContent>
-        </Popover>
+        <AssignClientsPopover
+          targetName={sub.name}
+          current={sub.clients ?? EMPTY_CLIENTS}
+          onChange={(next) => cc.setSubCategoryClients(sub.name, next)}
+        />
         <IconButton onClick={() => onOpenEdit(sub.name)} label={`Edit ${sub.name}`} variant="neutral">
           <Pencil className="h-3.5 w-3.5" />
         </IconButton>

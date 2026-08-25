@@ -123,6 +123,12 @@ export interface TaxonomySnapshot {
    * is skipped and only the explicitly tagged client(s) receive a card.
    * This field is optional — when absent no fan-out occurs (backward compat
    * with call sites that don't provide it, e.g. tests).
+   *
+   * Keyed by TAXONOMY PARENT, not strictly by sub-category: a flattened
+   * project (e.g. "Geniisys" promoted out of "Projects") is a MAIN category
+   * with no sub tier, so its roster is keyed on the main name. The field
+   * keeps its original name to avoid churning every call site; the domain
+   * is simply wider than it was.
    */
   clientsBySubCategory?: Readonly<Record<string, readonly string[]>>;
 }
@@ -994,9 +1000,14 @@ export function parseWorkAllocation(
         //
         // Scenario B override: @client tag in header → single card only.
         const headerHasClientTag = CLIENT_TAG_RE_INLINE.test(headerText);
+        // Fall back to the main category: post-flatten a project IS the
+        // category, so `resolved.subCategory` is null for "#Geniisys" and a
+        // sub-only gate would silently skip the fan-out — one card instead
+        // of three, with no error to notice.
+        const fanOutParent = resolved?.subCategory ?? resolved?.category;
         if (
           !headerHasClientTag &&
-          resolved?.subCategory &&
+          fanOutParent &&
           taxonomy?.clientsBySubCategory
         ) {
           // Fan out ONLY across official, registered clients — never the
@@ -1004,7 +1015,7 @@ export function parseWorkAllocation(
           // list. The divisor below is the filtered length so the split still
           // sums to blockPercentage (Epic 1 + Epic 2).
           const projectClients = filterOfficialClients(
-            taxonomy.clientsBySubCategory[resolved.subCategory] ?? [],
+            taxonomy.clientsBySubCategory[fanOutParent] ?? [],
             knownClients,
           );
           if (projectClients.length > 0) {
@@ -1156,9 +1167,11 @@ export function parseWorkAllocation(
       //
       // Scenario B override: @client present in description → single card.
       const lineHasClientTag = CLIENT_TAG_RE_INLINE.test(description);
+      // Same main-category fallback as the header path above.
+      const lineFanOutParent = resolved?.subCategory ?? resolved?.category;
       if (
         !lineHasClientTag &&
-        resolved?.subCategory &&
+        lineFanOutParent &&
         taxonomy?.clientsBySubCategory
       ) {
         // Fan out ONLY across official, registered clients — never the
@@ -1166,7 +1179,7 @@ export function parseWorkAllocation(
         // list. The divisor below is the filtered length so the split still
         // sums to the line percentage (Epic 1 + Epic 2).
         const projectClients = filterOfficialClients(
-          taxonomy.clientsBySubCategory[resolved.subCategory] ?? [],
+          taxonomy.clientsBySubCategory[lineFanOutParent] ?? [],
           knownClients,
         );
         if (projectClients.length > 0) {

@@ -133,7 +133,13 @@ export interface ApiJournalEntry {
 export interface ApiSettingsSnapshot {
   teams: Array<{ id: number; name: string; sortOrder: number }>;
   clients: Array<{ id: number; name: string; sortOrder: number }>;
-  mainCategories: Array<{ id: number; name: string; sortOrder: number }>;
+  mainCategories: Array<{
+    id: number;
+    name: string;
+    sortOrder: number;
+    /** Roster for sub-less mains (flattened projects). Empty array otherwise. */
+    clients: string[];
+  }>;
   subCategories: Array<{
     id: number;
     name: string;
@@ -613,6 +619,11 @@ const settings = {
     post<{ id: number; name: string }>('/api/settings/main-categories', { name, sortOrder }),
   renameMainCategory: (id: number, name: string) =>
     put<{ id: number; name: string }>(`/api/settings/main-categories/${id}`, { name }),
+  setMainCategoryClients: (id: number, clients: string[]) =>
+    patch<{ id: number; name: string; clients: string[] }>(
+      `/api/settings/main-categories/${id}/clients`,
+      { clients },
+    ),
   deleteMainCategory: (id: number) =>
     del<void>(`/api/settings/main-categories/${id}`),
 

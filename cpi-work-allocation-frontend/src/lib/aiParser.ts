@@ -875,10 +875,14 @@ function mergeClassifications(
     // "(custom)" frontend artifact or unregistered ad-hoc name that leaked
     // into the sub-category's assignment list. `percentageEach` below divides
     // by this filtered length, so the split still sums correctly (Epic 1 + 2).
+    // Parent falls back to the main category: post-flatten a project is a
+    // MAIN category with no sub tier, so `c.subCategory` is null and a
+    // sub-only gate would silently drop the fan-out.
+    const fanOutParent = c.subCategory ?? c.category;
     const projectClients =
-      resolvedBulletClients.length === 0 && c.subCategory
+      resolvedBulletClients.length === 0 && fanOutParent
         ? filterOfficialClients(
-            opts.taxonomy.clientsBySubCategory?.[c.subCategory] ?? [],
+            opts.taxonomy.clientsBySubCategory?.[fanOutParent] ?? [],
             opts.knownClients,
           )
         : [];

@@ -163,6 +163,25 @@ export interface ClientsConfigContextType {
   /** Replace the clients array for a sub category atomically. Meaningful for Projects. */
   setSubCategoryClients: (name: string, clients: string[]) => void;
 
+  /**
+   * Client roster keyed by TAXONOMY PARENT — a sub category name, or a
+   * main category name when that main has no subs (a flattened project
+   * such as "Geniisys").
+   *
+   * Exists because the parser's Scenario A/E fan-out has to answer
+   * "which clients does this tag cover?" without knowing which tier the
+   * tag resolved to. Keying on the parent name makes the two tiers
+   * interchangeable at the call site.
+   */
+  clientsByParent: Readonly<Record<string, readonly string[]>>;
+
+  /**
+   * Replace the clients array for a MAIN category atomically. Meaningful
+   * only for mains with no sub categories — a main that still has subs
+   * carries its rosters on those subs instead.
+   */
+  setMainCategoryClients: (name: string, clients: string[]) => void;
+
   // --- Inference rules (unchanged for now; Turn 3 may reshape) ------
   inferenceRules: readonly InferenceRule[];
   updateInferenceRules: (rules: readonly InferenceRule[]) => void;
@@ -354,6 +373,27 @@ interface ClientsConfigBundleV3 {
   subCategories: readonly SubCategory[];
   workTypes: readonly WorkType[];
   inferenceRules: readonly InferenceRule[];
+}
+
+
+/**
+ * Merge sub-category and main-category rosters into one parent -> clients
+ * map. Sub entries are written first so that if a name somehow exists at
+ * both tiers, the main-category roster wins — post-flatten the main IS the
+ * authoritative record for a promoted project.
+ */
+function buildClientsByParent(
+  subCategories: readonly SubCategory[],
+  mainCategoryClients: Readonly<Record<string, readonly string[]>>,
+): Readonly<Record<string, readonly string[]>> {
+  const out: Record<string, readonly string[]> = {};
+  for (const sub of subCategories) {
+    if (sub.clients && sub.clients.length > 0) out[sub.name] = sub.clients;
+  }
+  for (const [name, list] of Object.entries(mainCategoryClients)) {
+    if (list.length > 0) out[name] = list;
+  }
+  return out;
 }
 
 const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
@@ -593,6 +633,19 @@ const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
 
   const categories = mainCategories;
 
+  // Mock mode has no MainCategory.clients store — rosters live only on sub
+  // categories in the seed taxonomy, so the main tier contributes nothing.
+  const clientsByParent = useMemo(
+    () => buildClientsByParent(subCategories, {}),
+    [subCategories],
+  );
+
+  const setMainCategoryClients = useCallback((_name: string, _next: string[]) => {
+    // No-op in mock mode: the seed taxonomy keeps every roster on a sub
+    // category, so there is no main-tier roster to write. API mode
+    // implements this for real.
+  }, []);
+
   const workTypesByCategory = useMemo<
     Readonly<Record<string, readonly string[]>>
   >(() => {
@@ -646,6 +699,8 @@ const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       renameWorkType,
       setWorkTypeParents,
       setSubCategoryClients,
+      setMainCategoryClients,
+      clientsByParent,
 
       inferenceRules,
       updateInferenceRules,
@@ -679,6 +734,8 @@ const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       renameWorkType,
       setWorkTypeParents,
       setSubCategoryClients,
+      setMainCategoryClients,
+      clientsByParent,
       inferenceRules,
       updateInferenceRules,
       categories,
@@ -716,6 +773,21 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
   );
   const mainCategories = useMemo<readonly string[]>(
     () => snap?.mainCategories.map((m) => m.name) ?? SEED_MAIN_CATEGORIES,
+    [snap],
+  );
+  /**
+   * Main-category rosters straight off the snapshot. Kept separate from
+   * `mainCategories` (a plain string[]) so the widely-consumed shape of
+   * that field doesn't change.
+   */
+  const mainCategoryClients = useMemo<Readonly<Record<string, readonly string[]>>>(
+    () => {
+      const out: Record<string, readonly string[]> = {};
+      for (const m of snap?.mainCategories ?? []) {
+        if (m.clients && m.clients.length > 0) out[m.name] = m.clients;
+      }
+      return out;
+    },
     [snap],
   );
   const subCategories = useMemo<readonly SubCategory[]>(
@@ -1000,6 +1072,22 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
     [setSubCatClientsMut, snap],
   );
 
+  // Main-category roster. Unlike the sub-category twin this returns no
+  // generated rules — rule generation is driven by work-type parenting,
+  // which a roster edit doesn't change.
+  const setMainCatClientsMut = useMutation({
+    mutationFn: ({ id, clients: cls }: { id: number; clients: string[] }) =>
+      api.settings.setMainCategoryClients(id, cls),
+    onSuccess: () => invalidate(),
+  });
+  const setMainCategoryClients = useCallback(
+    (name: string, cls: string[]) => {
+      const id = snap?.mainCategories.find((m) => m.name === name)?.id;
+      if (id !== undefined) setMainCatClientsMut.mutate({ id, clients: cls });
+    },
+    [setMainCatClientsMut, snap],
+  );
+
   // ── Work types ───────────────────────────────────────────────────────
 
   const addWorkTypeMut = useMutation({
@@ -1144,6 +1232,11 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
 
   const categories = mainCategories;
 
+  const clientsByParent = useMemo(
+    () => buildClientsByParent(subCategories, mainCategoryClients),
+    [subCategories, mainCategoryClients],
+  );
+
   const workTypesByCategory = useMemo<Readonly<Record<string, readonly string[]>>>(
     () => {
       const out: Record<string, string[]> = {};
@@ -1198,6 +1291,8 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       setWorkTypeParents,
       bulkSetWorkTypeParents,
       setSubCategoryClients,
+      setMainCategoryClients,
+      clientsByParent,
       inferenceRules,
       updateInferenceRules,
       lastAutoGeneratedRules,
@@ -1232,6 +1327,8 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       setWorkTypeParents,
       bulkSetWorkTypeParents,
       setSubCategoryClients,
+      setMainCategoryClients,
+      clientsByParent,
       inferenceRules,
       updateInferenceRules,
       lastAutoGeneratedRules,
