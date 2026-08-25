@@ -184,11 +184,13 @@ const AdminSettings = () => {
   const [subSort, setSubSort]   = useState<{ col: "name" | "parent" | "types"; dir: SortDirection }>({ col: "name", dir: "asc" });
   const [wtSort,  setWtSort]    = useState<{ col: "name" | "parents"; dir: SortDirection }>({ col: "name", dir: "asc" });
 
+  const [outlinePage, setOutlinePage] = useState(1);
   const [mainPage, setMainPage] = useState(1);
   const [subPage, setSubPage]   = useState(1);
   const [wtPage, setWtPage]     = useState(1);
 
   useEffect(() => {
+    setOutlinePage(1);
     setMainPage(1);
     setSubPage(1);
     setWtPage(1);
@@ -744,6 +746,8 @@ const AdminSettings = () => {
                 <TaxonomyOutline
                   outlineSections={outlineSections}
                   searchActive={searchActive}
+                  page={outlinePage}
+                  onPageChange={setOutlinePage}
                   collapsed={collapsed}
                   onToggleCollapsed={toggleCollapsed}
                   onOpenEdit={(kind, name) => setEditTarget({ kind, name } as EditTarget)}
@@ -1107,6 +1111,8 @@ interface TaxonomyOutlineProps {
     include: boolean;
   }[];
   searchActive: boolean;
+  page: number;
+  onPageChange: (p: number) => void;
   collapsed: Set<string>;
   onToggleCollapsed: (main: string) => void;
   onOpenEdit: (kind: "mainCategory" | "subCategory" | "workType", name: string) => void;
@@ -1119,7 +1125,7 @@ interface TaxonomyOutlineProps {
 }
 
 const TaxonomyOutline = ({
-  outlineSections, searchActive, collapsed, onToggleCollapsed,
+  outlineSections, searchActive, page, onPageChange, collapsed, onToggleCollapsed,
   onOpenEdit, onDetachWorkType, onAddSubCategory, onAddWorkType, onCopyWorkTypes, onDeleteMain, onDeleteSub,
 }: TaxonomyOutlineProps) => {
   const visibleSections = outlineSections.filter((s) => s.include);
@@ -1139,10 +1145,22 @@ const TaxonomyOutline = ({
     );
   }
 
+  // Paginate AFTER the search filter, so a search narrows the result set and
+  // pagination walks the matches — same order as the flat tables.
+  //
+  // `page` is clamped rather than trusted: deleting the last main category on
+  // the final page would otherwise leave the user on an empty page with no way
+  // back except re-searching.
+  const totalPages = Math.max(1, Math.ceil(visibleSections.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pagedSections = paginate(visibleSections, safePage);
+
   return (
     <div>
-      {visibleSections.map((section, idx) => (
+      {pagedSections.map((section, idx) => (
         <MainCategoryBlock key={section.main}
+          // First block on each page, not just the first overall — the flag
+          // suppresses the leading divider, which every page needs.
           section={section} isFirst={idx === 0}
           isCollapsed={!searchActive && collapsed.has(section.main)}
           onToggleCollapsed={() => onToggleCollapsed(section.main)}
@@ -1155,6 +1173,11 @@ const TaxonomyOutline = ({
           onDeleteSub={onDeleteSub}
         />
       ))}
+      <PaginationFooter
+        page={safePage}
+        onPageChange={onPageChange}
+        totalItems={visibleSections.length}
+      />
     </div>
   );
 };
