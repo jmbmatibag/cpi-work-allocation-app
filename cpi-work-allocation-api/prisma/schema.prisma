@@ -370,7 +370,20 @@ model MainCategory {
   name      String @unique
   sortOrder Int    @default(0)
 
+  // Client names associated with this main category. Populated only when the
+  // category has NO sub-categories — i.e. a flattened project such as
+  // "Geniisys", promoted out of the old "Projects" tier. Mirrors
+  // SubCategory.clients exactly (PostgreSQL text[]) so the parser's client
+  // fan-out map can be keyed on either tier without a shape change.
+  clients   String[]
+
   subCategories SubCategory[]
+  // Rules that hang directly off this main category (no sub-category hop).
+  // Before flattening, the only cascade path was
+  //   MainCategory -> SubCategory (Cascade) -> InferenceRule (Cascade)
+  // which leaves rules for a sub-less category with no FK anchor at all.
+  // This relation restores DB-level cleanup for that case.
+  inferenceRules InferenceRule[]
 }
 
 model SubCategory {
@@ -412,12 +425,20 @@ model InferenceRule {
   // pre-migration rules remain valid; newly auto-generated rules populate both.
   // Chain: MainCategory → SubCategory (Cascade) → InferenceRule (Cascade)
   // so deleting a MainCategory wipes its InferenceRules two hops down.
-  subCategoryId Int?
-  workTypeId    Int?
+  //
+  // `mainCategoryId` is the one-hop variant for categories with no
+  // sub-category tier (flattened projects). A post-flatten rule should carry
+  // exactly ONE of mainCategoryId / subCategoryId — whichever tier it
+  // actually belongs to — never both.
+  mainCategoryId Int?
+  subCategoryId  Int?
+  workTypeId     Int?
 
-  subCategoryRef SubCategory? @relation(fields: [subCategoryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  workTypeRef    WorkType?    @relation(fields: [workTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  mainCategoryRef MainCategory? @relation(fields: [mainCategoryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  subCategoryRef  SubCategory?  @relation(fields: [subCategoryId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  workTypeRef     WorkType?     @relation(fields: [workTypeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
+  @@index([mainCategoryId])
   @@index([subCategoryId])
   @@index([workTypeId])
 }

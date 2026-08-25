@@ -8,6 +8,7 @@ import {
   RenameSchema,
   AddSubCategorySchema,
   SetSubCategoryClientsSchema,
+  SetMainCategoryClientsSchema,
   AddWorkTypeSchema,
   SetWorkTypeParentsSchema,
   BulkInferenceRulesSchema,
@@ -64,7 +65,15 @@ export async function snapshot(_req: Request, res: Response): Promise<void> {
   res.json({
     teams: teams.map((t) => ({ id: t.id, name: t.name, sortOrder: t.sortOrder })),
     clients: clients.map((c) => ({ id: c.id, name: c.name, sortOrder: c.sortOrder })),
-    mainCategories: mainCats.map((mc) => ({ id: mc.id, name: mc.name, sortOrder: mc.sortOrder })),
+    mainCategories: mainCats.map((mc) => ({
+      id: mc.id,
+      name: mc.name,
+      sortOrder: mc.sortOrder,
+      // Roster is meaningful only for sub-less categories (flattened
+      // projects). Always emitted so the client can build one
+      // parent -> clients map across both tiers.
+      clients: mc.clients,
+    })),
     subCategories: subCats.map((sc) => ({
       id: sc.id,
       name: sc.name,
@@ -259,6 +268,45 @@ export async function renameMainCategory(req: AuthRequest, res: Response): Promi
   res.json(cat);
 }
 
+/**
+ * Replace the client roster on a MAIN category.
+ *
+ * The sub-category twin (setSubCategoryClients) also auto-generates
+ * inference rules for newly added clients. This one deliberately does not:
+ * rule generation there is driven by work types parented to the sub, and
+ * duplicating that here would double-generate for categories that carry
+ * both tiers. Roster edits on a main category are a pure data change —
+ * the fan-out reads the roster directly.
+ */
+export async function setMainCategoryClients(req: AuthRequest, res: Response): Promise<void> {
+  const { id } = getValid(req, NumericIdParamSchema, 'params');
+  const body = getValid(req, SetMainCategoryClientsSchema);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const existing = await tx.mainCategory.findUniqueOrThrow({
+      where: { id },
+      select: { name: true, clients: true },
+    });
+
+    const result = await tx.mainCategory.update({
+      where: { id },
+      data: { clients: body.clients },
+    });
+
+    await logAuditTx(tx, {
+      userId: req.userId!,
+      action: 'update',
+      entity: 'MainCategory',
+      entityId: String(id),
+      payload: { name: existing.name, clientsBefore: existing.clients, clientsAfter: body.clients },
+    });
+
+    return result;
+  });
+
+  res.json(updated);
+}
+
 export async function deleteMainCategory(req: AuthRequest, res: Response): Promise<void> {
   const { id } = getValid(req, NumericIdParamSchema, 'params');
   await prisma.$transaction(async (tx) => {
@@ -287,10 +335,13 @@ export async function deleteMainCategory(req: AuthRequest, res: Response): Promi
       });
     }
 
-    // Clean up pre-migration InferenceRules (subCategoryId = null) for this category.
-    // FK-linked rules cascade automatically:
+    // Clean up pre-migration InferenceRules (no FK anchor at all) for this
+    // category. FK-linked rules cascade automatically, via either path:
     //   MainCategory → SubCategory (Cascade) → InferenceRule (Cascade)
-    await tx.inferenceRule.deleteMany({ where: { category: existing.name, subCategoryId: null } });
+    //   MainCategory → InferenceRule (Cascade)          [sub-less categories]
+    await tx.inferenceRule.deleteMany({
+      where: { category: existing.name, subCategoryId: null, mainCategoryId: null },
+    });
 
     await tx.mainCategory.delete({ where: { id } });
     await logAuditTx(tx, {

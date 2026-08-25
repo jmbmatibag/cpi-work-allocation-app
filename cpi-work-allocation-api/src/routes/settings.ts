@@ -6,6 +6,7 @@ import {
   RenameSchema,
   AddSubCategorySchema,
   SetSubCategoryClientsSchema,
+  SetMainCategoryClientsSchema,
   AddWorkTypeSchema,
   SetWorkTypeParentsSchema,
   BulkInferenceRulesSchema,
@@ -61,6 +62,13 @@ router.put(
   validate(NumericIdParamSchema, 'params'),
   validate(RenameSchema),
   ctrl.renameMainCategory
+);
+router.patch(
+  '/main-categories/:id/clients',
+  adminOnly,
+  validate(NumericIdParamSchema, 'params'),
+  validate(SetMainCategoryClientsSchema),
+  ctrl.setMainCategoryClients
 );
 router.delete(
   '/main-categories/:id',

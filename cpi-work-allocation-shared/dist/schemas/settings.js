@@ -15,6 +15,18 @@ export const AddSubCategorySchema = z.object({
 export const SetSubCategoryClientsSchema = z.object({
     clients: z.array(z.string()),
 });
+/**
+ * Client roster for a MAIN category.
+ *
+ * Same shape as SetSubCategoryClientsSchema — deliberately a separate export
+ * rather than a shared alias so the two tiers can diverge later without a
+ * breaking rename. A main category carries a roster only when it has no
+ * sub-categories (a flattened project such as "Geniisys"); the roster is what
+ * the parser's client fan-out reads.
+ */
+export const SetMainCategoryClientsSchema = z.object({
+    clients: z.array(z.string()),
+});
 export const AddWorkTypeSchema = z.object({
     name: z.string().min(1).max(100),
     parents: z.array(z.string()).min(1),
