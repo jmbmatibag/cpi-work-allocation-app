@@ -320,12 +320,17 @@ describe("parseWorkAllocation — #Category tag honoring", () => {
     expect(result[0].workCategory).toBe("IT");
   });
 
-  it("honors #Projects", () => {
+  it("#Projects no longer maps to a category — falls through to inference", () => {
+    // "Projects" was retired by the flatten; each project is now its own main
+    // category. With no successor to map to, the tag is left unresolved and
+    // the bullet is classified from its own text instead of being filed under
+    // a category that no longer exists.
     const result = parseWorkAllocation(
       "- Random work item #Projects - 10%",
       baseOptions,
     );
-    expect(result[0].workCategory).toBe("Projects");
+    expect(result[0].workCategory).not.toBe("Projects");
+    expect(result[0].workCategory).toBeTruthy();
   });
 
   it("falls back to keyword inference when no #tag is present", () => {
@@ -630,12 +635,14 @@ describe("Phase P — sub-category tag resolution", () => {
   });
 
   it("Without taxonomy, dynamic sub-cat tags fall through to legacy map", () => {
+    // Post-flatten the legacy map points at MAIN categories: Geniisys is its
+    // own top-level category with no sub tier, so subCategory is null.
     const result = parseWorkAllocation(
       "- Implementation #Geniisys - 40%",
       { defaultTeam: "IT/Platforms", knownClients: [], fallbackClient: "N/A" },
     );
-    expect(result[0].workCategory).toBe("Projects");
-    expect(result[0].subCategory).toBe("Geniisys");
+    expect(result[0].workCategory).toBe("Geniisys");
+    expect(result[0].subCategory).toBeNull();
   });
 
   it("All ParsedTasks include subCategory field", () => {

@@ -226,27 +226,43 @@ export const DEFAULT_INFERENCE_RULES: readonly InferenceRule[] = [
  * on full names, but that's not this phase.
  *
  * Pre-Phase-P these mapped to standalone categories (Geniisys,
- * Quick Policy, BODYSHOP). Post-Phase-P:
- *   - `#geniisys` and `#bliss` resolve to (Projects, Geniisys/Quick Policy,
- *     Implementation). They're now sub categories, not top-level
- *     categories.
+ * Quick Policy, BODYSHOP). Phase-P made them sub categories under
+ * `Projects`; the Projects flatten then promoted every project back to a
+ * top-level main category. So:
+ *   - `#geniisys` and `#bliss` resolve to (Geniisys / Quick Policy, null,
+ *     Implementation) — main categories with no sub category tier.
+ *   - `#projects` is gone. `Projects` was retired and its children became
+ *     separate mains, so there is no single successor to map it to.
+ *     Dropping the entry sends `#projects` through the normal
+ *     `inferCategory` keyword path instead, which classifies from the
+ *     bullet's own text. That is still a guess, but one derived from what
+ *     the user actually wrote — strictly better than a hardcoded mapping
+ *     to a category that no longer exists.
  *   - `#bodyshop` no longer exists as a category. Kept here as a
  *     no-op fallback that maps to (General Work, Administrative) so
  *     legacy entries don't crash — admins can recategorize manually.
+ *
+ * NOTE these are FALLBACKS only — resolveTag consults the live taxonomy
+ * first and reaches this table only when a tag matches no category, sub
+ * category, or work type. `#geniisys` therefore resolves via the taxonomy
+ * in normal operation; the hint matters when the settings snapshot is
+ * unavailable. `#bliss` has no taxonomy entry at all, so it ALWAYS lands
+ * here — which is why it pointed at a dead category until now.
  */
 export const LEGACY_TAG_HINTS: Record<
   string,
   { category: string; subCategory: string | null; workType: string }
 > = {
   it:        { category: "IT",             subCategory: null,       workType: "Infrastructure" },
-  projects:  { category: "Projects",       subCategory: null,       workType: "Development" },
   general:   { category: "General Work",   subCategory: null,       workType: "Meetings" },
   hr:        { category: "HR",             subCategory: null,       workType: "Recruitment" },
   finance:   { category: "Finance",        subCategory: null,       workType: "Reporting" },
   bdmktg:    { category: "Sales, Marketing & BD",  subCategory: null,       workType: "Marketing Campaign" },
   sales:     { category: "Sales, Marketing & BD",  subCategory: null,       workType: "Sales" },
-  geniisys:  { category: "Projects",       subCategory: "Geniisys", workType: "Implementation" },
-  bliss:     { category: "Projects",       subCategory: "Quick Policy",    workType: "Implementation" },
+  // Post-flatten these are MAIN categories, not sub categories — `Projects`
+  // was retired and every project promoted a level up.
+  geniisys:  { category: "Geniisys",       subCategory: null,       workType: "Implementation" },
+  bliss:     { category: "Quick Policy",   subCategory: null,       workType: "Implementation" },
   // Retired category — kept so legacy #bodyshop tags don't crash.
   bodyshop:  { category: "General Work",   subCategory: null,       workType: "Administrative" },
 };
