@@ -160,18 +160,25 @@ const AdminSettings = () => {
   const [taxonomyView, setTaxonomyView] = useState<TaxonomyView>("outline");
   const [search, setSearch] = useState("");
 
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  const [initializedCollapsed, setInitializedCollapsed] = useState(false);
+  // Tracks which mains the user has EXPANDED — the inverse of what this used
+  // to hold. Collapsed is the default state, so it must be what an unknown
+  // name gets, not something a category has to be registered for.
+  //
+  // The old version seeded a `collapsed` set once, guarded by an
+  // `initializedCollapsed` flag. In API mode `mainCategories` falls back to
+  // SEED_MAIN_CATEGORIES until the settings query resolves, so that effect
+  // fired against the six seed names, latched itself done, and every real
+  // category arriving afterwards was absent from the set — and therefore
+  // rendered expanded. Latent for as long as the live taxonomy resembled the
+  // seed; flattening Projects added 19 names that don't, and it showed.
+  //
+  // Inverting removes the race rather than papering over it: there is no
+  // initialization step to mistime, and newly created categories start
+  // collapsed for free.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (!initializedCollapsed && mainCategories.length > 0) {
-      setCollapsed(new Set(mainCategories));
-      setInitializedCollapsed(true);
-    }
-  }, [mainCategories, initializedCollapsed]);
-
-  const toggleCollapsed = (main: string) => {
-    setCollapsed((prev) => {
+  const toggleExpanded = (main: string) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(main)) next.delete(main);
       else next.add(main);
@@ -748,8 +755,8 @@ const AdminSettings = () => {
                   searchActive={searchActive}
                   page={outlinePage}
                   onPageChange={setOutlinePage}
-                  collapsed={collapsed}
-                  onToggleCollapsed={toggleCollapsed}
+                  expanded={expanded}
+                  onToggleExpanded={toggleExpanded}
                   onOpenEdit={(kind, name) => setEditTarget({ kind, name } as EditTarget)}
                   onDetachWorkType={(wtName, parent) => {
                     const wt = workTypes.find((w) => w.name === wtName);
@@ -1113,8 +1120,9 @@ interface TaxonomyOutlineProps {
   searchActive: boolean;
   page: number;
   onPageChange: (p: number) => void;
-  collapsed: Set<string>;
-  onToggleCollapsed: (main: string) => void;
+  /** Mains the user has explicitly expanded. Absent = collapsed. */
+  expanded: Set<string>;
+  onToggleExpanded: (main: string) => void;
   onOpenEdit: (kind: "mainCategory" | "subCategory" | "workType", name: string) => void;
   onDetachWorkType: (workTypeName: string, parentToRemove: string) => void;
   onAddSubCategory: (parentMain: string) => void;
@@ -1125,7 +1133,7 @@ interface TaxonomyOutlineProps {
 }
 
 const TaxonomyOutline = ({
-  outlineSections, searchActive, page, onPageChange, collapsed, onToggleCollapsed,
+  outlineSections, searchActive, page, onPageChange, expanded, onToggleExpanded,
   onOpenEdit, onDetachWorkType, onAddSubCategory, onAddWorkType, onCopyWorkTypes, onDeleteMain, onDeleteSub,
 }: TaxonomyOutlineProps) => {
   const visibleSections = outlineSections.filter((s) => s.include);
@@ -1162,8 +1170,8 @@ const TaxonomyOutline = ({
           // First block on each page, not just the first overall — the flag
           // suppresses the leading divider, which every page needs.
           section={section} isFirst={idx === 0}
-          isCollapsed={!searchActive && collapsed.has(section.main)}
-          onToggleCollapsed={() => onToggleCollapsed(section.main)}
+          isCollapsed={!searchActive && !expanded.has(section.main)}
+          onToggleCollapsed={() => onToggleExpanded(section.main)}
           onOpenEdit={onOpenEdit}
           onDetachWorkType={onDetachWorkType}
           onAddSubCategory={onAddSubCategory}
