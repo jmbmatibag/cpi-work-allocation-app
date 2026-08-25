@@ -137,6 +137,15 @@ async function main(): Promise<void> {
         const beforeActivityCount = await tx.allocationActivity.count();
         const beforePctByRecord = await recordPercentageMap(tx);
         const beforeRuleCount = await tx.inferenceRule.count();
+        // Baseline, not an absolute zero. Orphaned work types pre-date this
+        // script: deleteMainCategory prunes the parent NAME out of
+        // WorkType.parents without removing the row, so retiring a category
+        // leaves its work types with an empty parents[]. Asserting "none
+        // exist" therefore fails on pre-existing debt this migration didn't
+        // create and isn't responsible for. What matters is that WE add none.
+        const beforeEmptyParents = await tx.workType.count({
+          where: { parents: { isEmpty: true } },
+        });
 
         console.log(`Preflight OK — ${subs.length} sub-categories to promote.\n`);
 
@@ -357,11 +366,22 @@ async function main(): Promise<void> {
           );
         }
 
-        const emptyParents = await tx.workType.count({ where: { parents: { isEmpty: true } } });
-        if (emptyParents) {
+        const afterEmptyParents = await tx.workType.count({
+          where: { parents: { isEmpty: true } },
+        });
+        if (afterEmptyParents > beforeEmptyParents) {
           throw new Error(
-            `POST-CONDITION FAILED — ${emptyParents} work type(s) have no parents, violating ` +
-              `the .min(1) invariant in SetWorkTypeParentsSchema. Rolling back.`,
+            `POST-CONDITION FAILED — this migration orphaned ` +
+              `${afterEmptyParents - beforeEmptyParents} work type(s), leaving them with no ` +
+              `parents and violating the .min(1) invariant in SetWorkTypeParentsSchema ` +
+              `(${beforeEmptyParents} were already orphaned before this run). Rolling back.`,
+          );
+        }
+        if (beforeEmptyParents > 0) {
+          console.log(
+            `\nNote: ${beforeEmptyParents} work type(s) already had no parents before this ` +
+              `migration and still do. Unrelated to the flatten, but they are unselectable ` +
+              `in every dropdown — worth cleaning up separately.`,
           );
         }
 
