@@ -11,6 +11,7 @@ import settingsRouter from './routes/settings.js';
 import employeesRouter from './routes/employees.js';
 import managersRouter from './routes/managers.js';
 import allocationsRouter from './routes/allocations.js';
+import financeExportRouter from './routes/financeExport.js';
 import journalRouter from './routes/journal.js';
 import notificationsRouter from './routes/notifications.js';
 import maintenanceRouter from './routes/maintenance.js';
@@ -81,6 +82,7 @@ export function createApp() {
   app.use('/api/employees', employeesRouter);
   app.use('/api/managers', managersRouter);
   app.use('/api/allocations', allocationsRouter);
+  app.use('/api/finance-export', financeExportRouter);
   app.use('/api/journal', journalRouter);
   app.use('/api/notifications', notificationsRouter);
   app.use('/api/maintenance', maintenanceRouter);
