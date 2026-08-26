@@ -86,13 +86,12 @@ const PAGE_SIZE = 10;
 type TabKey =
   | "teams"
   | "clients"
-  | "enhancements"
   | "taxonomy"
   | "ai"
   | "inference"
   | "email"
   | "maintenance";
-type TaxonomyView = "outline" | "main" | "sub" | "workType";
+type TaxonomyView = "outline" | "main" | "sub" | "workType" | "enhancement";
 type SortDirection = "asc" | "desc";
 
 type DeleteTarget =
@@ -616,7 +615,6 @@ const AdminSettings = () => {
   const tabs = [
     { key: "teams"     as TabKey, label: "Teams",    icon: UsersIcon, count: teams.length,         visible: true },
     { key: "clients"   as TabKey, label: "Clients",  icon: Building2, count: clients.length,       visible: true },
-    { key: "enhancements" as TabKey, label: "Enhancements", icon: Sparkles, count: enhancements.length, visible: true },
     { key: "taxonomy"  as TabKey, label: "Taxonomy", icon: Network,   count: mainCategories.length, visible: true },
     { key: "ai"        as TabKey, label: "AI",       icon: Sparkles,  count: 0,                     visible: false },
     { key: "inference" as TabKey, label: "Inference Rules", icon: TagIcon, count: 0, visible: SHOW_INFERENCE_RULES_TAB },
@@ -629,13 +627,16 @@ const AdminSettings = () => {
     { key: "main",     label: "Main Categories", icon: Folder },
     { key: "sub",      label: "Sub Categories",  icon: Layers },
     { key: "workType", label: "Work Types",      icon: Wrench },
+    { key: "enhancement", label: "Enhancements", icon: Sparkles },
   ];
 
   const searchPlaceholder =
     activeTab === "teams"    ? "Search teams"
   : activeTab === "clients"  ? "Search clients"
-  : activeTab === "enhancements" ? "Search enhancements"
-  : activeTab === "taxonomy" ? "Search categories or work types"
+  : activeTab === "taxonomy"
+    ? taxonomyView === "enhancement"
+      ? "Search enhancements"
+      : "Search categories or work types"
   : "";
 
   // =====================================================================
@@ -759,43 +760,6 @@ const AdminSettings = () => {
           </div>
         )}
 
-        {/* Enhancements — the roster backing the "Specific Enhancement"
-            dropdown on allocation cards and the Finance Enhancement column. */}
-        {activeTab === "enhancements" && (
-          <div className="rounded-xl bg-card border border-border shadow-sm">
-            <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-              <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input placeholder={searchPlaceholder} value={search} onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9 h-9 text-sm border-0 shadow-none focus-visible:ring-1" />
-              </div>
-              <div className="flex-1" />
-              <Button onClick={() => openAdd({ type: "enhancement" })} size="sm"
-                className="h-9 gap-1.5 text-[13px] font-medium shadow-sm"
-                style={{ background: "hsl(var(--primary))", color: "white" }}>
-                <Plus className="h-3.5 w-3.5" />
-                Add Enhancement
-              </Button>
-            </div>
-            <div className="px-5 pt-4">
-              <p className="text-xs text-muted-foreground">
-                Shown on a card when its Work Type is <strong>Specific Enhancement</strong>, and
-                exported as Finance's <strong>Enhancement</strong> column. Renaming one repoints
-                every allocation already tagged with it.
-              </p>
-            </div>
-            <div className="p-5">
-              <DataTable
-                columns={enhancementColumns}
-                data={enhancementRows}
-                pageSize={10}
-                emptyMessage={enhancements.length === 0 ? "No enhancements yet." : "No matches."}
-                defaultSorting={[{ id: "name", desc: false }]}
-              />
-            </div>
-          </div>
-        )}
-
         {/* Taxonomy */}
         {activeTab === "taxonomy" && (
           <div className="space-y-4">
@@ -843,6 +807,14 @@ const AdminSettings = () => {
                     style={{ background: "hsl(var(--primary))", color: "white" }}>
                     <Plus className="h-3.5 w-3.5" />
                     Add Sub Category
+                  </Button>
+                )}
+                {taxonomyView === "enhancement" && (
+                  <Button onClick={() => openAdd({ type: "enhancement" })} size="sm"
+                    className="h-9 gap-1.5 text-[13px] font-medium shadow-sm"
+                    style={{ background: "hsl(var(--primary))", color: "white" }}>
+                    <Plus className="h-3.5 w-3.5" />
+                    Add Enhancement
                   </Button>
                 )}
                 {taxonomyView === "workType" && (
@@ -927,6 +899,31 @@ const AdminSettings = () => {
                     setDeleteTarget({ type: "workType", name, parentCount: wt?.parents.length ?? 0 });
                   }}
                 />
+              )}
+
+              {/* Enhancements — the roster behind the "Specific Enhancement"
+                  dropdown on allocation cards and Finance's Enhancement
+                  column. It sits under Taxonomy because it is the fourth
+                  tier of the same tree, not a separate concern. */}
+              {taxonomyView === "enhancement" && (
+                <>
+                  <div className="px-5 pt-4">
+                    <p className="text-xs text-muted-foreground">
+                      Shown on a card when its Work Type is <strong>Specific Enhancement</strong>, and
+                      exported as Finance's <strong>Enhancement</strong> column. Renaming one repoints
+                      every allocation already tagged with it.
+                    </p>
+                  </div>
+                  <div className="p-5">
+                    <DataTable
+                      columns={enhancementColumns}
+                      data={enhancementRows}
+                      pageSize={10}
+                      emptyMessage={enhancements.length === 0 ? "No enhancements yet." : "No matches."}
+                      defaultSorting={[{ id: "name", desc: false }]}
+                    />
+                  </div>
+                </>
               )}
             </div>
           </div>

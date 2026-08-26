@@ -270,6 +270,20 @@ describe('enhancement tag', () => {
     ).toBe('');
   });
 
+  it('treats hyphen and space as the same separator', () => {
+    // The live roster uses a CLIENT-FEATURE convention. In free text people
+    // drop the hyphen, so the parser must read it as punctuation, not as
+    // part of the name.
+    const REAL = ['AXA-SMART CLAIMS', 'AXA-MTC', 'WGC-PLATE NUMBER VALIDATION'];
+    expect(extractEnhancementTag('axa smart claims regression', REAL)).toBe('AXA-SMART CLAIMS');
+    expect(extractEnhancementTag('AXA-SMART-CLAIMS regression', REAL)).toBe('AXA-SMART CLAIMS');
+    expect(extractEnhancementTag('wgc plate number validation', REAL)).toBe(
+      'WGC-PLATE NUMBER VALIDATION',
+    );
+    // Still bounded — a longer token is not a hit.
+    expect(extractEnhancementTag('AXA-MTCX build', REAL)).toBeNull();
+  });
+
   it('tolerates casing, spacing and separator noise', () => {
     expect(extractEnhancementTag('SMART   CLAIMS regression', ROSTER)).toBe('Smart Claims');
     expect(extractEnhancementTag('oauth / oidc rollout', ROSTER)).toBe('OAuth/OIDC');

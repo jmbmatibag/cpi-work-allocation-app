@@ -60,21 +60,22 @@ export function extractWorkReference(description: string): string | null {
  * this feature exists to eliminate, and the value RETURNED is always the
  * canonical spelling — never the logger's variant:
  *
- *   • spaces      → `\s+`            "Smart  Claims"          ✓
- *   • slashes     → `\s*[/-]\s*`     "OAuth - OIDC"           ✓
- *   • letter→digit→ optional space   "GISTP 2.5"              ✓
- *   • word edges  → lookaround       "GISTP2.55" / "XMTC API" ✗
+ *   • separators  → `[\s/-]+`        "axa smart claims"       ✓
+ *   • letter→digit→ optional gap     "GISTP 2.5"              ✓
+ *   • word edges  → lookaround       "GISTP2.55" / "AXA-MTCX" ✗
  */
 function buildTagPattern(tag: string): RegExp {
   const body = tag
     // Escape regex specials first, so "GISTP2.5" becomes "GISTP2\.5".
     .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    // Then loosen: any run of spaces matches any run of spaces.
-    .replace(/\s+/g, '\\s+')
-    // "OAuth/OIDC" should also match "OAuth - OIDC" and "OAuth/ OIDC".
-    .replace(/\//g, '\\s*[/-]\\s*')
-    // "GISTP2.5" should also match "GISTP 2.5".
-    .replace(/([A-Za-z])(\d)/g, '$1\\s*$2');
+    // Any run of space / hyphen / slash in the tag matches any such run in
+    // the text. The roster uses a CLIENT-FEATURE convention ("AXA-SMART
+    // CLAIMS"), and in free text people type that separator as a space, a
+    // hyphen, or both — it is punctuation, not part of the name. One class
+    // covers all of it, so "OAuth/OIDC" ~ "OAuth - OIDC" falls out too.
+    .replace(/[\s/-]+/g, '[\\s/-]+')
+    // "GISTP2.5" should also match "GISTP 2.5" and "GISTP-2.5".
+    .replace(/([A-Za-z])(\d)/g, '$1[\\s-]*$2');
   return new RegExp(`(?<![A-Za-z0-9])${body}(?![A-Za-z0-9])`, 'i');
 }
 
