@@ -1,3 +1,5 @@
+import { isSpecificEnhancement } from 'cpi-work-allocation-shared';
+
 /**
  * Finance export mapping.
  *
@@ -48,10 +50,114 @@ export function extractWorkReference(description: string): string | null {
   return null;
 }
 
+// ── Enhancement tag ─────────────────────────────────────────────────────
+
+/**
+ * Build a tolerant matcher for one canonical tag.
+ *
+ * Derived from the live roster rather than hand-written so the dropdown and
+ * the parser can never drift apart. The tolerances absorb exactly the noise
+ * this feature exists to eliminate, and the value RETURNED is always the
+ * canonical spelling — never the logger's variant:
+ *
+ *   • spaces      → `\s+`            "Smart  Claims"          ✓
+ *   • slashes     → `\s*[/-]\s*`     "OAuth - OIDC"           ✓
+ *   • letter→digit→ optional space   "GISTP 2.5"              ✓
+ *   • word edges  → lookaround       "GISTP2.55" / "XMTC API" ✗
+ */
+function buildTagPattern(tag: string): RegExp {
+  const body = tag
+    // Escape regex specials first, so "GISTP2.5" becomes "GISTP2\.5".
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // Then loosen: any run of spaces matches any run of spaces.
+    .replace(/\s+/g, '\\s+')
+    // "OAuth/OIDC" should also match "OAuth - OIDC" and "OAuth/ OIDC".
+    .replace(/\//g, '\\s*[/-]\\s*')
+    // "GISTP2.5" should also match "GISTP 2.5".
+    .replace(/([A-Za-z])(\d)/g, '$1\\s*$2');
+  return new RegExp(`(?<![A-Za-z0-9])${body}(?![A-Za-z0-9])`, 'i');
+}
+
+/**
+ * Compiled matchers for one roster, ordered longest-tag-first so a longer tag
+ * always wins over any shorter one it could contain.
+ *
+ * The roster is admin-maintainable, so this can no longer be built once at
+ * module load. It is memoised on the roster contents instead: a single export
+ * touches thousands of rows but only ever one roster, so this compiles the
+ * regexes once per request rather than once per row.
+ */
+const matcherCache = new Map<string, ReadonlyArray<readonly [string, RegExp]>>();
+
+export function buildEnhancementMatchers(
+  roster: readonly string[],
+): ReadonlyArray<readonly [string, RegExp]> {
+  // JSON key: unambiguous across roster entries containing spaces.
+  const key = JSON.stringify(roster);
+  const hit = matcherCache.get(key);
+  if (hit) return hit;
+
+  const built = [...roster]
+    .filter((t) => t.trim().length > 0)
+    .sort((a, b) => b.length - a.length)
+    .map((tag) => [tag, buildTagPattern(tag)] as const);
+
+  // Unbounded growth is not a concern — the key space is "distinct rosters
+  // seen since boot", which changes only when an Admin edits the list.
+  matcherCache.set(key, built);
+  return built;
+}
+
+/**
+ * Historical fallback — recover the enhancement name from free text.
+ *
+ * Rows logged before `enhancementTag` existed carry the name only inside the
+ * description. Returns null when nothing matches: same rule as
+ * extractWorkReference — this column gates Finance's own review, so a guessed
+ * tag would pass that review unchecked while a blank is visibly incomplete.
+ *
+ * `roster` is required, not defaulted. Defaulting it to the shared constants
+ * is exactly how the inference-rule bug hid for weeks: the parser looked
+ * healthy while silently ignoring everything the admin had configured.
+ */
+export function extractEnhancementTag(
+  description: string,
+  roster: readonly string[],
+): string | null {
+  const text = (description ?? '').trim();
+  if (!text) return null;
+
+  for (const [tag, re] of buildEnhancementMatchers(roster)) {
+    if (re.test(text)) return tag;
+  }
+  return null;
+}
+
+/**
+ * Hybrid resolution, most-trusted source first:
+ *
+ *   1. The stored tag — a human picked it from the roster. Authoritative, and
+ *      returned even if an admin has since removed it from the roster: the
+ *      historical record of what was logged outranks today's list.
+ *   2. Description parse — ONLY for Specific Enhancement rows, so an unrelated
+ *      task that merely mentions "Smart Claims" in passing is never mislabelled.
+ *   3. Blank.
+ */
+export function resolveEnhancement(act: ActivitySource, roster: readonly string[]): string {
+  const stored = act.enhancementTag?.trim();
+  if (stored) return stored;
+  if (!isSpecificEnhancement(act.workType)) return '';
+  return extractEnhancementTag(act.description, roster) ?? '';
+}
+
 export interface FinanceExportRow {
   mainCategory: string; // Finance Column 1
   category1: string; // Finance Column 2
   category2: string; // Finance Column 3
+  // Structured Enhancement tag. Appended AFTER the three mandated columns,
+  // same rule as the context columns below — Finance's column order is
+  // theirs, and inserting into the middle of it silently breaks their sheet.
+  enhancement: string;
   // Context columns. Finance asked for three, but a flat export with no owner
   // or period is unreconcilable against the source. Appended AFTER the
   // mandated three so their column order is untouched.
@@ -69,6 +175,9 @@ export interface ActivitySource {
   streamCategory: string;
   subCategory: string | null;
   workType: string;
+  // Optional, not just nullable: rows read from a database migrated before
+  // this column existed, and older test fixtures, legitimately omit it.
+  enhancementTag?: string | null;
   client: string;
   description: string;
   percentage: number;
@@ -84,7 +193,15 @@ export interface RecordSource {
   activities: readonly ActivitySource[];
 }
 
-export function buildFinanceRows(records: readonly RecordSource[]): FinanceExportRow[] {
+/**
+ * @param enhancementRoster live Enhancement names (settings snapshot / DB).
+ *        Required so a stale or defaulted list can never silently produce a
+ *        sheet that disagrees with what Finance sees in Admin Settings.
+ */
+export function buildFinanceRows(
+  records: readonly RecordSource[],
+  enhancementRoster: readonly string[],
+): FinanceExportRow[] {
   const out: FinanceExportRow[] = [];
 
   for (const rec of records) {
@@ -104,6 +221,7 @@ export function buildFinanceRows(records: readonly RecordSource[]): FinanceExpor
         mainCategory,
         category1: act.workType,
         category2: reference ? `${act.workType} - ${reference}` : act.workType,
+        enhancement: resolveEnhancement(act, enhancementRoster),
         employeeId: rec.employeeId,
         employeeName: `${rec.employee.firstName} ${rec.employee.lastName}`,
         team: rec.team,
@@ -127,6 +245,7 @@ const CSV_COLUMNS: ReadonlyArray<[keyof FinanceExportRow, string]> = [
   ['mainCategory', 'Main Category'],
   ['category1', 'Category 1'],
   ['category2', 'Category 2'],
+  ['enhancement', 'Enhancement'],
   ['employeeId', 'Employee ID'],
   ['employeeName', 'Employee Name'],
   ['team', 'Team'],

@@ -54,6 +54,24 @@ router.delete(
   ctrl.deleteClient
 );
 
+// ── Enhancements ──────────────────────────────────────────────────
+// Reuses AddNameSchema / RenameSchema — the roster is the same flat
+// { name, sortOrder } shape as Clients, so it needs no schemas of its own.
+router.post('/enhancements', adminOnly, validate(AddNameSchema), ctrl.createEnhancement);
+router.put(
+  '/enhancements/:id',
+  adminOnly,
+  validate(NumericIdParamSchema, 'params'),
+  validate(RenameSchema),
+  ctrl.renameEnhancement
+);
+router.delete(
+  '/enhancements/:id',
+  adminOnly,
+  validate(NumericIdParamSchema, 'params'),
+  ctrl.deleteEnhancement
+);
+
 // ── Main Categories ───────────────────────────────────────────────────────
 router.post('/main-categories', adminOnly, validate(AddNameSchema), ctrl.createMainCategory);
 router.put(

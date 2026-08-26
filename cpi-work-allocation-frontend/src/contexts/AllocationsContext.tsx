@@ -207,6 +207,8 @@ const seedStreams = (
       workCategory: s.category,
       subCategory: a.subCategory ?? null,
       workType: a.workType,
+      // Seed data carries no enhancement tags; they are picked on the card.
+      enhancementTag: null,
       client: a.client,
       description: a.description,
       percentage: a.percentage,

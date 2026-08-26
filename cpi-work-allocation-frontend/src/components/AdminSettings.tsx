@@ -86,6 +86,7 @@ const PAGE_SIZE = 10;
 type TabKey =
   | "teams"
   | "clients"
+  | "enhancements"
   | "taxonomy"
   | "ai"
   | "inference"
@@ -97,6 +98,7 @@ type SortDirection = "asc" | "desc";
 type DeleteTarget =
   | { type: "team";         name: string }
   | { type: "client";       name: string }
+  | { type: "enhancement";  name: string }
   | { type: "mainCategory"; name: string; subCount: number; workTypeCount: number }
   | { type: "subCategory";  name: string; workTypeCount: number }
   | { type: "workType";     name: string; parentCount: number };
@@ -104,6 +106,7 @@ type DeleteTarget =
 type AddContext =
   | { type: "team" }
   | { type: "client" }
+  | { type: "enhancement" }
   | { type: "mainCategory" }
   | { type: "subCategory";   parentMain?: string }
   | { type: "workType";      parentName?: string };
@@ -111,6 +114,7 @@ type AddContext =
 type EditTarget =
   | { kind: "team";         name: string }
   | { kind: "client";       name: string }
+  | { kind: "enhancement";  name: string }
   | { kind: "mainCategory"; name: string }
   | { kind: "subCategory";  name: string }
   | { kind: "workType";     name: string };
@@ -140,6 +144,10 @@ const AdminSettings = () => {
     addClient,
     removeClient,
     renameClient,
+    enhancements,
+    addEnhancement,
+    removeEnhancement,
+    renameEnhancement,
     addMainCategory,
     removeMainCategory,
     renameMainCategory,
@@ -288,6 +296,13 @@ const AdminSettings = () => {
     () => filteredClients.map((name) => ({ name })),
     [filteredClients],
   );
+  const enhancementRows = useMemo<SimpleRow[]>(
+    () =>
+      enhancements
+        .filter((e) => !q || e.toLowerCase().includes(q))
+        .map((name) => ({ name })),
+    [enhancements, q],
+  );
 
   const teamColumns = useMemo<ColumnDef<SimpleRow>[]>(
     () => [
@@ -376,6 +391,54 @@ const AdminSettings = () => {
               </button>
               <button
                 onClick={() => setDeleteTarget({ type: "client", name })}
+                aria-label={`Delete ${name}`}
+                className="p-1.5 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        },
+      },
+    ],
+    [setEditTarget, setDeleteTarget],
+  );
+
+  const enhancementColumns = useMemo<ColumnDef<SimpleRow>[]>(
+    () => [
+      {
+        accessorKey: "name",
+        header: "Enhancement",
+        cell: ({ row }) => {
+          const name = row.original.name;
+          return (
+            <div className="flex items-center gap-2.5">
+              <div className="bg-amber-50 text-amber-600 rounded-md p-1.5 shrink-0">
+                <Sparkles className="h-3.5 w-3.5" />
+              </div>
+              <span className="text-[14px] font-medium text-foreground">{name}</span>
+            </div>
+          );
+        },
+      },
+      {
+        id: "actions",
+        header: "",
+        enableSorting: false,
+        size: 80,
+        cell: ({ row }) => {
+          const name = row.original.name;
+          return (
+            <div className="flex items-center justify-end gap-0.5">
+              <button
+                onClick={() => setEditTarget({ kind: "enhancement", name })}
+                aria-label={`Edit ${name}`}
+                className="p-1.5 rounded hover:bg-muted transition-colors text-muted-foreground"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setDeleteTarget({ type: "enhancement", name })}
                 aria-label={`Delete ${name}`}
                 className="p-1.5 rounded hover:bg-destructive/10 text-destructive/60 hover:text-destructive transition-colors"
               >
@@ -521,6 +584,10 @@ const AdminSettings = () => {
         addClient(name);
         toast.success("Client added.");
         break;
+      case "enhancement":
+        addEnhancement(name);
+        toast.success("Enhancement added.");
+        break;
       case "mainCategory":
         addMainCategory(name);
         toast.success("Main category added.");
@@ -535,6 +602,7 @@ const AdminSettings = () => {
     switch (deleteTarget.type) {
       case "team":         removeTeam(deleteTarget.name); break;
       case "client":       removeClient(deleteTarget.name); break;
+      case "enhancement":  removeEnhancement(deleteTarget.name); break;
       case "mainCategory": removeMainCategory(deleteTarget.name); break;
       case "subCategory":  removeSubCategory(deleteTarget.name); break;
       case "workType":     removeWorkType(deleteTarget.name); break;
@@ -548,6 +616,7 @@ const AdminSettings = () => {
   const tabs = [
     { key: "teams"     as TabKey, label: "Teams",    icon: UsersIcon, count: teams.length,         visible: true },
     { key: "clients"   as TabKey, label: "Clients",  icon: Building2, count: clients.length,       visible: true },
+    { key: "enhancements" as TabKey, label: "Enhancements", icon: Sparkles, count: enhancements.length, visible: true },
     { key: "taxonomy"  as TabKey, label: "Taxonomy", icon: Network,   count: mainCategories.length, visible: true },
     { key: "ai"        as TabKey, label: "AI",       icon: Sparkles,  count: 0,                     visible: false },
     { key: "inference" as TabKey, label: "Inference Rules", icon: TagIcon, count: 0, visible: SHOW_INFERENCE_RULES_TAB },
@@ -565,6 +634,7 @@ const AdminSettings = () => {
   const searchPlaceholder =
     activeTab === "teams"    ? "Search teams"
   : activeTab === "clients"  ? "Search clients"
+  : activeTab === "enhancements" ? "Search enhancements"
   : activeTab === "taxonomy" ? "Search categories or work types"
   : "";
 
@@ -683,6 +753,43 @@ const AdminSettings = () => {
                 data={clientRows}
                 pageSize={10}
                 emptyMessage={clients.length === 0 ? "No clients yet." : "No matches."}
+                defaultSorting={[{ id: "name", desc: false }]}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Enhancements — the roster backing the "Specific Enhancement"
+            dropdown on allocation cards and the Finance Enhancement column. */}
+        {activeTab === "enhancements" && (
+          <div className="rounded-xl bg-card border border-border shadow-sm">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
+              <div className="relative flex-1 max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                <Input placeholder={searchPlaceholder} value={search} onChange={(e) => setSearch(e.target.value)}
+                  className="pl-9 h-9 text-sm border-0 shadow-none focus-visible:ring-1" />
+              </div>
+              <div className="flex-1" />
+              <Button onClick={() => openAdd({ type: "enhancement" })} size="sm"
+                className="h-9 gap-1.5 text-[13px] font-medium shadow-sm"
+                style={{ background: "hsl(var(--primary))", color: "white" }}>
+                <Plus className="h-3.5 w-3.5" />
+                Add Enhancement
+              </Button>
+            </div>
+            <div className="px-5 pt-4">
+              <p className="text-xs text-muted-foreground">
+                Shown on a card when its Work Type is <strong>Specific Enhancement</strong>, and
+                exported as Finance's <strong>Enhancement</strong> column. Renaming one repoints
+                every allocation already tagged with it.
+              </p>
+            </div>
+            <div className="p-5">
+              <DataTable
+                columns={enhancementColumns}
+                data={enhancementRows}
+                pageSize={10}
+                emptyMessage={enhancements.length === 0 ? "No enhancements yet." : "No matches."}
                 defaultSorting={[{ id: "name", desc: false }]}
               />
             </div>
@@ -839,7 +946,7 @@ const AdminSettings = () => {
       </div>
 
       {/* Add dialog (simple adds: team, client, main category) */}
-      {addCtx && (addCtx.type === "team" || addCtx.type === "client" || addCtx.type === "mainCategory") && (
+      {addCtx && (addCtx.type === "team" || addCtx.type === "client" || addCtx.type === "enhancement" || addCtx.type === "mainCategory") && (
         <SimpleAddDialog
           open
           kind={addCtx.type}
@@ -907,6 +1014,13 @@ const AdminSettings = () => {
             cascadeRenameClient(oldName, newName);
             setEditTarget(null);
           }}
+          onEnhancementRename={(oldName, newName) => {
+            renameEnhancement(oldName, newName);
+            // The server cascades AllocationActivity.enhancementTag in the
+            // same transaction, so unlike clients there is nothing to fan out.
+            toast.success("Renamed. Tagged allocations repointed.");
+            setEditTarget(null);
+          }}
           onMainRename={(oldName, newName) => {
             renameMainCategory(oldName, newName);
             toast.success("Renamed. Cascades applied.");
@@ -950,6 +1064,7 @@ const AdminSettings = () => {
             if (!t) return;
             if (t.kind === "team") setDeleteTarget({ type: "team", name: t.name });
             else if (t.kind === "client") setDeleteTarget({ type: "client", name: t.name });
+            else if (t.kind === "enhancement") setDeleteTarget({ type: "enhancement", name: t.name });
             else if (t.kind === "mainCategory") {
               const subCount = subCategoriesForMain(t.name).length;
               const workTypeCount = workTypes.filter((w) => w.parents.includes(t.name)).length;
@@ -1692,12 +1807,13 @@ const WorkTypesTable = ({
 
 const SimpleAddDialog = ({
   open, kind, onClose, onSubmit,
-}: { open: boolean; kind: "team" | "client" | "mainCategory"; onClose: () => void; onSubmit: (name: string) => void }) => {
+}: { open: boolean; kind: "team" | "client" | "enhancement" | "mainCategory"; onClose: () => void; onSubmit: (name: string) => void }) => {
   const [name, setName] = useState("");
   useEffect(() => { if (open) setName(""); }, [open]);
   const labels = {
     team: "New Team",
     client: "New Client",
+    enhancement: "New Enhancement",
     mainCategory: "New Main Category",
   };
   const submit = () => {
@@ -1980,6 +2096,7 @@ interface EditDialogProps {
   target: EditTarget;
   cc: ClientsConfigFull;
   onTeamRename: (oldName: string, newName: string) => void;
+  onEnhancementRename: (oldName: string, newName: string) => void;
   onClientRename: (oldName: string, newName: string) => void;
   onMainRename: (oldName: string, newName: string) => void;
   onSubRename: (oldName: string, newName: string) => void;
@@ -2022,6 +2139,16 @@ const EditDialog = (props: EditDialogProps) => {
             onRename={props.onClientRename}
             onDelete={props.onDeleteSelf}
             onClose={onClose}
+          />
+        )}
+        {target.kind === "enhancement" && (
+          <EditSimple
+            kind="enhancement"
+            name={target.name}
+            onRename={props.onEnhancementRename}
+            onDelete={props.onDeleteSelf}
+            onClose={onClose}
+            note="Renaming repoints every allocation entry already tagged with this enhancement, so Finance history stays in one bucket."
           />
         )}
         {target.kind === "mainCategory" && (
@@ -2073,7 +2200,7 @@ const EditDialog = (props: EditDialogProps) => {
 const EditSimple = ({
   kind, name, onRename, onDelete, onClose, note,
 }: {
-  kind: "team" | "client";
+  kind: "team" | "client" | "enhancement";
   name: string;
   onRename: (oldName: string, newName: string) => void;
   onDelete: () => void;
@@ -2090,7 +2217,9 @@ const EditSimple = ({
   return (
     <>
       <DialogHeader>
-        <DialogTitle className="text-lg">Edit {kind === "team" ? "Team" : "Client"}</DialogTitle>
+        <DialogTitle className="text-lg">
+          Edit {kind === "team" ? "Team" : kind === "client" ? "Client" : "Enhancement"}
+        </DialogTitle>
         <DialogDescription className="text-sm">{note}</DialogDescription>
       </DialogHeader>
       <div className="space-y-1.5 pt-2">

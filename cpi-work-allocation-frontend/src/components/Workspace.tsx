@@ -23,6 +23,10 @@ import { useAIConfig } from "@/contexts/AIConfigContext";
 import type { ActivityFlag } from "@/contexts/AllocationsContext";
 import { buildHighlightRegex, renderTagged } from "@/lib/tagHighlight";
 import { isLeaveOrHolidayLog, inferOthersWorkType } from "@/lib/leaveClassification";
+import {
+  isSpecificEnhancement,
+  isKnownEnhancementTag,
+} from "cpi-work-allocation-shared";
 
 // Normalize a stored description for display or storage.
 //
@@ -202,6 +206,12 @@ export interface ActivityData {
    */
   subCategory: string | null;
   workType: string;
+  /**
+   * Structured Enhancement tag. Non-null ONLY when `workType` is the
+   * Specific Enhancement type; every other work type must carry null, or a
+   * stale tag left behind by a work-type switch flows into the Finance sheet.
+   */
+  enhancementTag: string | null;
   client: string;
   description: string;
   percentage: number;
@@ -334,6 +344,9 @@ const Workspace = ({
   const {
     teams,
     clients,
+    // Live Enhancement roster from settings — never the shared defaults, or
+    // the dropdown would disagree with what Finance sees in Admin Settings.
+    enhancements,
     categories,
     subCategories,
     subCategoriesForMain,
@@ -553,6 +566,9 @@ const Workspace = ({
         workCategory: a.workCategory,
         subCategory: a.subCategory,
         workType: a.workType,
+        // The parser has no notion of enhancement tags; the user picks one on
+        // the card. Blank over a guessed default.
+        enhancementTag: null,
         client: a.client,
         description: normalizeDescription(a.description, a.client),
         percentage: a.percentage,
@@ -667,6 +683,7 @@ const Workspace = ({
     workCategory,
     subCategory: null,
     workType: "",
+    enhancementTag: null,
     client: "",
     description: "",
     percentage: 0,
@@ -702,6 +719,7 @@ const Workspace = ({
                 workCategory: category,
                 subCategory: null,
                 workType: "",
+                enhancementTag: null,
               })),
             }
           : s,
@@ -1097,6 +1115,8 @@ const Workspace = ({
                                                                       null,
                                                                     workType:
                                                                       "",
+                                                                    enhancementTag:
+                                                                      null,
                                                                   }
                                                                 : a,
                                                           ),
@@ -1153,6 +1173,8 @@ const Workspace = ({
                                                                         v,
                                                                       workType:
                                                                         "",
+                                                                      enhancementTag:
+                                                                        null,
                                                                     }
                                                                   : a,
                                                             ),
@@ -1185,14 +1207,27 @@ const Workspace = ({
                                           </label>
                                           <Select
                                             value={activity.workType}
-                                            onValueChange={(v) =>
+                                            onValueChange={(v) => {
                                               updateActivity(
                                                 sIdx,
                                                 aIdx,
                                                 "workType",
                                                 v,
-                                              )
-                                            }
+                                              );
+                                              // Leaving Specific Enhancement
+                                              // clears the tag. Hiding the
+                                              // field is not enough — the
+                                              // value would survive on the
+                                              // object and reach Finance.
+                                              if (!isSpecificEnhancement(v)) {
+                                                updateActivity(
+                                                  sIdx,
+                                                  aIdx,
+                                                  "enhancementTag",
+                                                  null,
+                                                );
+                                              }
+                                            }}
                                             disabled={
                                               hasSubs && !activity.subCategory
                                             }
@@ -1222,6 +1257,69 @@ const Workspace = ({
                                             </SelectContent>
                                           </Select>
                                         </div>
+
+                                        {/* Enhancement tag — rendered only for
+                                            Specific Enhancement work. Finance
+                                            reads this column instead of hunting
+                                            the description for a name a typo
+                                            can break. */}
+                                        {isSpecificEnhancement(
+                                          activity.workType,
+                                        ) && (
+                                          <div className="space-y-1">
+                                            <label className="text-xs font-medium text-muted-foreground">
+                                              Enhancement
+                                            </label>
+                                            <Select
+                                              value={
+                                                activity.enhancementTag ?? ""
+                                              }
+                                              onValueChange={(v) =>
+                                                updateActivity(
+                                                  sIdx,
+                                                  aIdx,
+                                                  "enhancementTag",
+                                                  v,
+                                                )
+                                              }
+                                            >
+                                              <SelectTrigger>
+                                                <SelectValue placeholder="Select enhancement..." />
+                                              </SelectTrigger>
+                                              <SelectContent>
+                                                {enhancements.length === 0 ? (
+                                                  <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                                                    No enhancements configured.
+                                                  </div>
+                                                ) : null}
+                                                {enhancements.map((t) => (
+                                                  <SelectItem key={t} value={t}>
+                                                    {t}
+                                                  </SelectItem>
+                                                ))}
+                                                {/* Keep a legacy/off-roster
+                                                    value already on the record
+                                                    rather than blanking it on
+                                                    the next save — same arm as
+                                                    the Client field below. */}
+                                                {activity.enhancementTag &&
+                                                  !isKnownEnhancementTag(
+                                                    activity.enhancementTag,
+                                                    enhancements,
+                                                  ) && (
+                                                    <SelectItem
+                                                      value={
+                                                        activity.enhancementTag
+                                                      }
+                                                    >
+                                                      {activity.enhancementTag}{" "}
+                                                      (custom)
+                                                    </SelectItem>
+                                                  )}
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        )}
                                       </>
                                     );
                                   })()}

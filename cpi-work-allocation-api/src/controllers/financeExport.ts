@@ -20,6 +20,16 @@ export async function exportForFinance(req: AuthRequest, res: Response): Promise
   const month = q.month ?? fallback.month;
   const year = q.year ?? fallback.year;
 
+  // Live Enhancement roster — the parser fallback must agree with whatever
+  // an Admin currently has in Settings, so it is read per export rather than
+  // baked in at module load.
+  const enhancementRoster = (
+    await prisma.enhancement.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: { name: true },
+    })
+  ).map((e) => e.name);
+
   const records = await prisma.allocationRecord.findMany({
     where: {
       month,
@@ -35,7 +45,7 @@ export async function exportForFinance(req: AuthRequest, res: Response): Promise
     orderBy: [{ team: 'asc' }, { employeeId: 'asc' }],
   });
 
-  const rows = buildFinanceRows(records);
+  const rows = buildFinanceRows(records, enhancementRoster);
 
   // Exports carry every employee's allocation off the system boundary — log
   // who pulled what, and when.

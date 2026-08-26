@@ -11,6 +11,7 @@
  */
 
 export * from './lib/reportingPeriod.js';
+export * from './lib/enhancementTags.js';
 export * from './schemas/common.js';
 export * from './schemas/auth.js';
 export * from './schemas/allocations.js';

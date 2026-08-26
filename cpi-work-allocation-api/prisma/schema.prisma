@@ -200,6 +200,16 @@ model AllocationActivity {
   description    String
   percentage     Float
 
+  // Structured tag for "Specific Enhancement" work ("MTC API", "Smart Claims"
+  // ...). Nullable on purpose: it is meaningless for every other work type,
+  // and every row written before this column existed is legitimately null —
+  // the Finance export falls back to parsing `description` for those.
+  //
+  // A String rather than an enum: the option list is business data Finance
+  // will extend, and an enum would force a migration per addition. Validity is
+  // enforced at the form + shared-schema layer, same as `client`/`workType`.
+  enhancementTag String?
+
   // Position of the parent stream and this activity within it. Needed to
   // reconstruct the ordered WorkStreamData[] on read without relying on
   // insertion order.
@@ -360,6 +370,17 @@ model Team {
 }
 
 model Client {
+  id        Int    @id @default(autoincrement())
+  name      String @unique
+  sortOrder Int    @default(0)
+}
+
+// Enhancement tag roster for "Specific Enhancement" work. Deliberately the
+// same flat shape as Client — a maintained lookup list with no relations. The
+// name is the value denormalised onto AllocationActivity.enhancementTag, so
+// renames MUST cascade there (see settings.ts::renameEnhancement) or history
+// falls out of its Finance bucket, the ghost-category bug all over again.
+model Enhancement {
   id        Int    @id @default(autoincrement())
   name      String @unique
   sortOrder Int    @default(0)

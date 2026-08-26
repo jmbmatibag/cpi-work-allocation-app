@@ -11,7 +11,13 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { createApp } from '../app.js';
 import { prisma } from '../lib/prisma.js';
-import { extractWorkReference, buildFinanceRows, toFinanceCsv } from '../lib/financeExport.js';
+import {
+  extractWorkReference,
+  extractEnhancementTag,
+  resolveEnhancement,
+  buildFinanceRows,
+  toFinanceCsv,
+} from '../lib/financeExport.js';
 
 vi.mock('../lib/mailer.js', () => ({ sendOtpEmail: vi.fn() }));
 
@@ -117,6 +123,18 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
+// Explicit roster, mirroring what the Enhancement table seeds. Passed in
+// everywhere rather than defaulted, so a test can never pass against a list
+// the running app would not have used.
+const ROSTER = [
+  'MTC API',
+  'Smart Claims',
+  'OAuth/OIDC',
+  'Plate Number Validation',
+  'Treaty Limit',
+  'GISTP2.5',
+];
+
 describe('extractWorkReference', () => {
   it('normalises separator and case on ticket references', () => {
     expect(extractWorkReference('work on SR 41631 today')).toBe('SR 41631');
@@ -156,7 +174,7 @@ describe('buildFinanceRows', () => {
           },
         ],
       },
-    ]);
+    ], ROSTER);
 
     expect(rows[0].mainCategory).toBe('Geniisys');
     expect(rows[0].category1).toBe('Enhancement');
@@ -186,11 +204,112 @@ describe('buildFinanceRows', () => {
           },
         ],
       },
-    ]);
+    ], ROSTER);
 
     expect(rows[0].mainCategory).toBe('Geniisys');
     // No reference found -> bare work type, not a fabricated one.
     expect(rows[0].category2).toBe('Enhancement');
+  });
+});
+
+describe('enhancement tag', () => {
+
+  const base = {
+    streamCategory: 'Geniisys',
+    subCategory: null,
+    client: 'AUII',
+    percentage: 100,
+  };
+
+  it('prefers the stored tag over anything in the description', () => {
+    // Priority 1. A human picked this from a fixed list; the description
+    // naming a DIFFERENT enhancement must not override it.
+    expect(
+      resolveEnhancement({
+        ...base,
+        workType: 'Specific Enhancement',
+        enhancementTag: 'Treaty Limit',
+        description: 'worked on Smart Claims today',
+      }, ROSTER),
+    ).toBe('Treaty Limit');
+  });
+
+  it('falls back to parsing the description on historical rows', () => {
+    // Priority 2. enhancementTag is null because the row predates the column.
+    expect(
+      resolveEnhancement({
+        ...base,
+        workType: 'Specific Enhancement',
+        enhancementTag: null,
+        description: 'fixed the mtc api timeout',
+      }, ROSTER),
+    ).toBe('MTC API');
+  });
+
+  it('does not parse descriptions of non-enhancement work', () => {
+    // The fallback is gated on work type so a passing mention never
+    // mislabels an unrelated task.
+    expect(
+      resolveEnhancement({
+        ...base,
+        workType: 'Support',
+        enhancementTag: null,
+        description: 'answered a question about Smart Claims',
+      }, ROSTER),
+    ).toBe('');
+  });
+
+  it('leaves the column blank rather than guessing', () => {
+    expect(
+      resolveEnhancement({
+        ...base,
+        workType: 'Specific Enhancement',
+        enhancementTag: null,
+        description: 'general cleanup, nothing named',
+      }, ROSTER),
+    ).toBe('');
+  });
+
+  it('tolerates casing, spacing and separator noise', () => {
+    expect(extractEnhancementTag('SMART   CLAIMS regression', ROSTER)).toBe('Smart Claims');
+    expect(extractEnhancementTag('oauth / oidc rollout', ROSTER)).toBe('OAuth/OIDC');
+    expect(extractEnhancementTag('OAuth-OIDC rollout', ROSTER)).toBe('OAuth/OIDC');
+    expect(extractEnhancementTag('gistp 2.5 migration', ROSTER)).toBe('GISTP2.5');
+    expect(extractEnhancementTag('plate number validation bug', ROSTER)).toBe(
+      'Plate Number Validation',
+    );
+  });
+
+  it('respects word boundaries', () => {
+    // Substring hits inside a longer token are not the tag.
+    expect(extractEnhancementTag('XMTC APIX something', ROSTER)).toBeNull();
+    expect(extractEnhancementTag('', ROSTER)).toBeNull();
+  });
+
+  it('surfaces the tag as its own export column', () => {
+    const rows = buildFinanceRows([
+      {
+        employeeId: 'E1',
+        team: 'T',
+        month: 'March',
+        year: '2099',
+        status: 'Approved',
+        employee: { firstName: 'A', lastName: 'B' },
+        activities: [
+          {
+            ...base,
+            workType: 'Specific Enhancement',
+            enhancementTag: 'Smart Claims',
+            description: 'SR 41631 payout screen',
+          },
+        ],
+      },
+    ], ROSTER);
+
+    expect(rows[0].enhancement).toBe('Smart Claims');
+    // The three mandated Finance columns are untouched by the addition.
+    expect(rows[0].category1).toBe('Specific Enhancement');
+    expect(rows[0].category2).toBe('Specific Enhancement - SR 41631');
   });
 });
 
@@ -201,6 +320,7 @@ describe('toFinanceCsv', () => {
         mainCategory: 'Geniisys',
         category1: 'Support',
         category2: 'Support',
+        enhancement: '',
         employeeId: 'E1',
         employeeName: 'A B',
         team: 'T',
@@ -214,7 +334,7 @@ describe('toFinanceCsv', () => {
 
     expect(csv).toContain('"has ""quotes"", a comma\nand a newline"');
     expect(csv.split('\r\n')[0]).toBe(
-      'Main Category,Category 1,Category 2,Employee ID,Employee Name,Team,Client,%,Period,Status,Description',
+      'Main Category,Category 1,Category 2,Enhancement,Employee ID,Employee Name,Team,Client,%,Period,Status,Description',
     );
   });
 });

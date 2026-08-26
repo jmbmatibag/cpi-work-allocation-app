@@ -149,6 +149,8 @@ export interface ApiSettingsSnapshot {
     sortOrder: number;
   }>;
   workTypes: Array<{ id: number; name: string; parents: string[] }>;
+  /** Enhancement roster for "Specific Enhancement" work. */
+  enhancements: Array<{ id: number; name: string; sortOrder: number }>;
   inferenceRules: Array<{
     id: number;
     keywords: string[];
@@ -613,6 +615,17 @@ const settings = {
     put<{ id: number; name: string }>(`/api/settings/clients/${id}`, { name }),
   deleteClient: (id: number) =>
     del<void>(`/api/settings/clients/${id}`),
+
+  // Enhancements
+  createEnhancement: (name: string, sortOrder?: number) =>
+    post<{ id: number; name: string }>('/api/settings/enhancements', { name, sortOrder }),
+  renameEnhancement: (id: number, name: string) =>
+    put<{ id: number; name: string; activitiesRepointed: number }>(
+      `/api/settings/enhancements/${id}`,
+      { name },
+    ),
+  deleteEnhancement: (id: number) =>
+    del<void>(`/api/settings/enhancements/${id}`),
 
   // Main categories
   createMainCategory: (name: string, sortOrder?: number) =>

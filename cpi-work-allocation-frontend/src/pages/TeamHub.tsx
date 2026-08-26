@@ -24,6 +24,10 @@ import type { Employee } from "@/contexts/EmployeesContext";
 import type { WorkStreamData, ActivityData } from "@/components/Workspace";
 import { cn } from "@/lib/utils";
 import { multiWordTagPattern } from "@/lib/tagHighlight";
+import {
+  isSpecificEnhancement,
+  isKnownEnhancementTag,
+} from "cpi-work-allocation-shared";
 import AllocationHistorySheet from "@/components/AllocationHistorySheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -939,6 +943,7 @@ const ReviewEditor = ({ streams, onStreamsChange }: ReviewEditorProps) => {
     subCategoriesForMain,
     workTypesForParent,
     sharedClientList,
+    enhancements,
   } = useClientsConfig();
 
   const updateActivity = (
@@ -1031,6 +1036,7 @@ const ReviewEditor = ({ streams, onStreamsChange }: ReviewEditorProps) => {
                                             workCategory: v,
                                             subCategory: null,
                                             workType: "",
+                                            enhancementTag: null,
                                           }
                                         : a,
                                     ),
@@ -1072,6 +1078,7 @@ const ReviewEditor = ({ streams, onStreamsChange }: ReviewEditorProps) => {
                                               ...a,
                                               subCategory: v,
                                               workType: "",
+                                              enhancementTag: null,
                                             }
                                           : a,
                                       ),
@@ -1101,9 +1108,15 @@ const ReviewEditor = ({ streams, onStreamsChange }: ReviewEditorProps) => {
                         </label>
                         <Select
                           value={activity.workType}
-                          onValueChange={(v) =>
-                            updateActivity(sIdx, aIdx, "workType", v)
-                          }
+                          onValueChange={(v) => {
+                            updateActivity(sIdx, aIdx, "workType", v);
+                            // Leaving Specific Enhancement clears the tag —
+                            // hiding the field alone would leave a stale value
+                            // on the record for Finance to pick up.
+                            if (!isSpecificEnhancement(v)) {
+                              updateActivity(sIdx, aIdx, "enhancementTag", null);
+                            }
+                          }}
                           disabled={hasSubs && !activity.subCategory}
                         >
                           <SelectTrigger className="text-sm h-8">
@@ -1130,6 +1143,49 @@ const ReviewEditor = ({ streams, onStreamsChange }: ReviewEditorProps) => {
                           </SelectContent>
                         </Select>
                       </div>
+
+                      {/* Enhancement tag — mirrors the employee Workspace card
+                          so a manager edit can set or correct it rather than
+                          only inheriting whatever the employee picked. */}
+                      {isSpecificEnhancement(activity.workType) && (
+                        <div className="space-y-1">
+                          <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                            Enhancement
+                          </label>
+                          <Select
+                            value={activity.enhancementTag ?? ""}
+                            onValueChange={(v) =>
+                              updateActivity(sIdx, aIdx, "enhancementTag", v)
+                            }
+                          >
+                            <SelectTrigger className="text-sm h-8">
+                              <SelectValue placeholder="Select..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {enhancements.length === 0 ? (
+                                <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                                  No enhancements configured.
+                                </div>
+                              ) : null}
+                              {enhancements.map((t) => (
+                                <SelectItem key={t} value={t}>
+                                  {t}
+                                </SelectItem>
+                              ))}
+                              {activity.enhancementTag &&
+                                !isKnownEnhancementTag(
+                                  activity.enhancementTag,
+                                  enhancements,
+                                ) && (
+                                  <SelectItem value={activity.enhancementTag}>
+                                    {activity.enhancementTag} (custom)
+                                  </SelectItem>
+                                )}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+
                       <div className="space-y-1">
                         <label className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
                           Client

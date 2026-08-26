@@ -50,7 +50,8 @@ function tokenizeWorkTypeName(name: string): string[] {
 // ── Snapshot ────────────────────────────────────────────────────────────────
 
 export async function snapshot(_req: Request, res: Response): Promise<void> {
-  const [teams, clients, mainCats, subCats, workTypes, inferenceRules] = await Promise.all([
+  const [teams, clients, mainCats, subCats, workTypes, inferenceRules, enhancements] =
+    await Promise.all([
     prisma.team.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
     prisma.client.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
     prisma.mainCategory.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
@@ -60,6 +61,7 @@ export async function snapshot(_req: Request, res: Response): Promise<void> {
     }),
     prisma.workType.findMany({ orderBy: { name: 'asc' } }),
     prisma.inferenceRule.findMany({ orderBy: { sortOrder: 'asc' } }),
+    prisma.enhancement.findMany({ orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }] }),
   ]);
 
   res.json({
@@ -83,6 +85,13 @@ export async function snapshot(_req: Request, res: Response): Promise<void> {
       sortOrder: sc.sortOrder,
     })),
     workTypes: workTypes.map((wt) => ({ id: wt.id, name: wt.name, parents: wt.parents })),
+    // Enhancement roster. Emitted to every authenticated user, not just
+    // Admins — the allocation card dropdown needs it as much as the editor.
+    enhancements: enhancements.map((e) => ({
+      id: e.id,
+      name: e.name,
+      sortOrder: e.sortOrder,
+    })),
     inferenceRules: inferenceRules.map((ir) => ({
       id: ir.id,
       keywords: ir.keywords,
@@ -191,6 +200,117 @@ export async function deleteClient(req: AuthRequest, res: Response): Promise<voi
       action: 'delete',
       entity: 'Client',
       entityId: String(id),
+    });
+  });
+  res.status(204).send();
+}
+
+// ── Enhancements ─────────────────────────────────────────────────────────
+
+export async function createEnhancement(req: AuthRequest, res: Response): Promise<void> {
+  const body = getValid(req, AddNameSchema);
+  const enhancement = await prisma.$transaction(async (tx) => {
+    const created = await tx.enhancement.create({
+      data: { name: body.name.trim(), sortOrder: body.sortOrder },
+    });
+    await logAuditTx(tx, {
+      userId: req.userId!,
+      action: 'create',
+      entity: 'Enhancement',
+      entityId: String(created.id),
+      payload: { name: created.name, sortOrder: created.sortOrder },
+    });
+    return created;
+  });
+  res.status(201).json(enhancement);
+}
+
+/**
+ * Rename an enhancement AND repoint every activity carrying the old name.
+ *
+ * AllocationActivity.enhancementTag is a denormalised string with no FK —
+ * exactly like streamCategory. Without the cascade, renaming "Smart Claims"
+ * would strand every historical row on a name no longer on the roster, and
+ * they would quietly fall out of their Finance bucket. This follows the
+ * MainCategory precedent, NOT the Client one (client renames are fanned out
+ * client-side through AllocationsContext instead).
+ */
+export async function renameEnhancement(req: AuthRequest, res: Response): Promise<void> {
+  const { id } = getValid(req, NumericIdParamSchema, 'params');
+  const body = getValid(req, RenameSchema);
+  const newName = body.name.trim();
+
+  const result = await prisma.$transaction(async (tx) => {
+    const existing = await tx.enhancement.findUnique({ where: { id } });
+    if (!existing) return null;
+
+    const oldName = existing.name;
+    const updated = await tx.enhancement.update({ where: { id }, data: { name: newName } });
+
+    const cascaded =
+      oldName === newName
+        ? { count: 0 }
+        : await tx.allocationActivity.updateMany({
+            where: { enhancementTag: oldName },
+            data: { enhancementTag: newName },
+          });
+
+    await logAuditTx(tx, {
+      userId: req.userId!,
+      action: 'update',
+      entity: 'Enhancement',
+      entityId: String(updated.id),
+      payload: { name: updated.name, renamedFrom: oldName, activitiesRepointed: cascaded.count },
+    });
+    return { updated, repointed: cascaded.count };
+  });
+
+  if (!result) {
+    res.status(404).json({ error: 'Enhancement not found' });
+    return;
+  }
+  res.json({ ...result.updated, activitiesRepointed: result.repointed });
+}
+
+/**
+ * Delete an enhancement, but refuse while activities still carry it.
+ *
+ * Deleting an in-use tag would orphan those rows on a value no longer on the
+ * roster — they would still export (the stored tag is authoritative) but the
+ * UI would render them "(custom)" with no way back. Refusing with the usage
+ * count lets the Admin retag or rename instead, which is almost always what
+ * they meant.
+ */
+export async function deleteEnhancement(req: AuthRequest, res: Response): Promise<void> {
+  const { id } = getValid(req, NumericIdParamSchema, 'params');
+
+  const existing = await prisma.enhancement.findUnique({ where: { id } });
+  if (!existing) {
+    res.status(404).json({ error: 'Enhancement not found' });
+    return;
+  }
+
+  const inUse = await prisma.allocationActivity.count({
+    where: { enhancementTag: existing.name },
+  });
+  if (inUse > 0) {
+    res.status(409).json({
+      error:
+        `"${existing.name}" is used by ${inUse} allocation ` +
+        `${inUse === 1 ? 'entry' : 'entries'}. Rename it, or retag those entries first.`,
+      inUse,
+    });
+    return;
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.enhancement.delete({ where: { id } });
+    await logAuditTx(tx, {
+      userId: req.userId!,
+      action: 'delete',
+      entity: 'Enhancement',
+      entityId: String(id),
+      payload: { name: existing.name },
     });
   });
   res.status(204).send();

@@ -15,6 +15,7 @@ type ActivityStub = {
   streamCategory: string;
   subCategory: string | null;
   workType: string;
+  enhancementTag: string | null;
   client: string;
   description: string;
   percentage: number;
@@ -53,6 +54,7 @@ export type StreamsInput = Array<{
     id: string;
     subCategory?: string | null;
     workType: string;
+    enhancementTag?: string | null;
     client: string;
     description: string;
     percentage: number;
@@ -64,6 +66,7 @@ export type FlatActivity = {
   streamCategory: string;
   subCategory: string | null;
   workType: string;
+  enhancementTag: string | null;
   client: string;
   description: string;
   percentage: number;
@@ -90,6 +93,9 @@ export function toFrontendRecord(record: any) {
       workCategory: act.streamCategory,
       subCategory: act.subCategory,
       workType: act.workType,
+      // The read path must carry this or the next autosave round-trips it back
+      // as undefined and wipes the tag — exactly how flagReason was lost.
+      enhancementTag: act.enhancementTag ?? null,
       client: act.client,
       description: act.description,
       percentage: act.percentage,
@@ -178,6 +184,7 @@ export function flattenStreams(streams: StreamsInput): FlatActivity[] {
         streamCategory: stream.category,
         subCategory: act.subCategory ?? null,
         workType: act.workType,
+        enhancementTag: act.enhancementTag ?? null,
         client: act.client,
         description: act.description,
         percentage: act.percentage,

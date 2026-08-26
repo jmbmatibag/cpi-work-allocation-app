@@ -10,6 +10,7 @@ export declare const ActivityDataSchema: z.ZodObject<{
     workCategory: z.ZodString;
     subCategory: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     workType: z.ZodString;
+    enhancementTag: z.ZodOptional<z.ZodNullable<z.ZodString>>;
     client: z.ZodString;
     description: z.ZodString;
     percentage: z.ZodNumber;
@@ -27,6 +28,7 @@ export declare const WorkStreamDataSchema: z.ZodObject<{
         workCategory: z.ZodString;
         subCategory: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         workType: z.ZodString;
+        enhancementTag: z.ZodOptional<z.ZodNullable<z.ZodString>>;
         client: z.ZodString;
         description: z.ZodString;
         percentage: z.ZodNumber;
@@ -49,6 +51,7 @@ export declare const UpsertDraftSchema: z.ZodObject<{
             workCategory: z.ZodString;
             subCategory: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             workType: z.ZodString;
+            enhancementTag: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             client: z.ZodString;
             description: z.ZodString;
             percentage: z.ZodNumber;
@@ -89,6 +92,7 @@ export declare const SubmitAllocationSchema: z.ZodDefault<z.ZodObject<{
             workCategory: z.ZodString;
             subCategory: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             workType: z.ZodString;
+            enhancementTag: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             client: z.ZodString;
             description: z.ZodString;
             percentage: z.ZodNumber;
@@ -121,6 +125,7 @@ export declare const ManagerEditSchema: z.ZodObject<{
             workCategory: z.ZodString;
             subCategory: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             workType: z.ZodString;
+            enhancementTag: z.ZodOptional<z.ZodNullable<z.ZodString>>;
             client: z.ZodString;
             description: z.ZodString;
             percentage: z.ZodNumber;

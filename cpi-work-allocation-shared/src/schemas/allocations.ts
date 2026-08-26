@@ -11,6 +11,9 @@ export const ActivityDataSchema = z.object({
   workCategory: z.string(),
   subCategory: z.string().nullable().optional(),
   workType: z.string(),
+  // Structured tag for Specific Enhancement work; null for every other work
+  // type. Optional so drafts written before this field existed still parse.
+  enhancementTag: z.string().nullable().optional(),
   client: z.string(),
   description: z.string(),
   percentage: z.number().min(0).max(100),

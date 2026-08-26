@@ -13,6 +13,10 @@ import {
   type InferenceRule,
 } from "@/lib/promptParser";
 import { getDataClient } from "@/lib/dataClient";
+import {
+  DEFAULT_ENHANCEMENT_TAGS,
+  normalizeEnhancementTag,
+} from "cpi-work-allocation-shared";
 import { api, type ApiSettingsSnapshot } from "@/lib/apiClient";
 
 /**
@@ -123,6 +127,21 @@ export interface ClientsConfigContextType {
    * content).
    */
   renameClient: (oldName: string, newName: string) => void;
+
+  // --- Enhancement roster -------------------------------------------
+  /**
+   * Tags selectable on a "Specific Enhancement" card. Server-owned in API
+   * mode (the `Enhancement` table), local state in localStorage mode.
+   */
+  enhancements: readonly string[];
+  addEnhancement: (name: string) => void;
+  removeEnhancement: (name: string) => void;
+  /**
+   * Rename an enhancement. Unlike renameClient, callers do NOT need to
+   * propagate this: in API mode the server cascades
+   * AllocationActivity.enhancementTag inside the same transaction.
+   */
+  renameEnhancement: (oldName: string, newName: string) => void;
 
   // --- New taxonomy model -------------------------------------------
   mainCategories: readonly string[];
@@ -369,6 +388,8 @@ export const useClientsConfig = () => {
 interface ClientsConfigBundleV3 {
   teams: readonly string[];
   clients: readonly string[];
+  /** Optional — bundles written before the roster existed simply lack it. */
+  enhancements?: readonly string[];
   mainCategories: readonly string[];
   subCategories: readonly SubCategory[];
   workTypes: readonly WorkType[];
@@ -408,6 +429,9 @@ const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
   const [clients, setClients] = useState<readonly string[]>(
     () => persisted?.clients ?? SEED_CLIENTS,
   );
+  const [enhancements, setEnhancements] = useState<readonly string[]>(
+    () => persisted?.enhancements ?? DEFAULT_ENHANCEMENT_TAGS,
+  );
   const [mainCategories, setMainCategories] = useState<readonly string[]>(
     () => persisted?.mainCategories ?? SEED_MAIN_CATEGORIES,
   );
@@ -426,12 +450,13 @@ const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
     getDataClient().write<ClientsConfigBundleV3>("clientsConfig", {
       teams,
       clients,
+      enhancements,
       mainCategories,
       subCategories,
       workTypes,
       inferenceRules,
     });
-  }, [teams, clients, mainCategories, subCategories, workTypes, inferenceRules]);
+  }, [teams, clients, enhancements, mainCategories, subCategories, workTypes, inferenceRules]);
 
   const sharedClientList = useMemo(
     () => buildSharedClientList(clients),
@@ -474,6 +499,28 @@ const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
     setClients((prev) =>
       prev.map((c) => (c === oldName ? trimmed : c)),
     );
+  }, []);
+
+  // ── Enhancements ────────────────────────────────────────────────────
+
+  const addEnhancement = useCallback((name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setEnhancements((prev) =>
+      prev.some((e) => normalizeEnhancementTag(e) === normalizeEnhancementTag(trimmed))
+        ? prev
+        : [...prev, trimmed],
+    );
+  }, []);
+
+  const removeEnhancement = useCallback((name: string) => {
+    setEnhancements((prev) => prev.filter((e) => e !== name));
+  }, []);
+
+  const renameEnhancement = useCallback((oldName: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) return;
+    setEnhancements((prev) => prev.map((e) => (e === oldName ? trimmed : e)));
   }, []);
 
   // ------------------- Queries --------------------------------------
@@ -683,6 +730,11 @@ const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       removeClient,
       renameClient,
 
+      enhancements,
+      addEnhancement,
+      removeEnhancement,
+      renameEnhancement,
+
       mainCategories,
       subCategories,
       workTypes,
@@ -718,6 +770,10 @@ const LocalClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       addClient,
       removeClient,
       renameClient,
+      enhancements,
+      addEnhancement,
+      removeEnhancement,
+      renameEnhancement,
       mainCategories,
       subCategories,
       workTypes,
@@ -769,6 +825,16 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
   );
   const clients = useMemo<readonly string[]>(
     () => snap?.clients.map((c) => c.name) ?? SEED_CLIENTS,
+    [snap],
+  );
+  /**
+   * Live Enhancement roster. Falls back to the shared defaults ONLY while the
+   * snapshot is still loading — once `snap` arrives the server is the sole
+   * authority, even if it returns an empty list (an Admin may have cleared it).
+   * Using `?? DEFAULT` here instead would resurrect deleted tags forever.
+   */
+  const enhancements = useMemo<readonly string[]>(
+    () => (snap ? snap.enhancements.map((e) => e.name) : DEFAULT_ENHANCEMENT_TAGS),
     [snap],
   );
   const mainCategories = useMemo<readonly string[]>(
@@ -895,6 +961,45 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       if (id !== undefined) removeClientMut.mutate(id);
     },
     [removeClientMut, snap],
+  );
+
+  const addEnhancementMut = useMutation({
+    mutationFn: (name: string) => api.settings.createEnhancement(name),
+    onSuccess: invalidate,
+  });
+  const addEnhancement = useCallback(
+    (name: string) => {
+      const t = name.trim();
+      if (t) addEnhancementMut.mutate(t);
+    },
+    [addEnhancementMut],
+  );
+
+  const removeEnhancementMut = useMutation({
+    mutationFn: (id: number) => api.settings.deleteEnhancement(id),
+    onSuccess: invalidate,
+  });
+  const removeEnhancement = useCallback(
+    (name: string) => {
+      const id = snap?.enhancements.find((e) => e.name === name)?.id;
+      if (id !== undefined) removeEnhancementMut.mutate(id);
+    },
+    [removeEnhancementMut, snap],
+  );
+
+  const renameEnhancementMut = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) =>
+      api.settings.renameEnhancement(id, name),
+    onSuccess: invalidate,
+  });
+  const renameEnhancement = useCallback(
+    (oldName: string, newName: string) => {
+      const trimmed = newName.trim();
+      const id = snap?.enhancements.find((e) => e.name === oldName)?.id;
+      if (trimmed && trimmed !== oldName && id !== undefined)
+        renameEnhancementMut.mutate({ id, name: trimmed });
+    },
+    [renameEnhancementMut, snap],
   );
 
   const renameClientMut = useMutation({
@@ -1274,6 +1379,11 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       addClient,
       removeClient,
       renameClient,
+
+      enhancements,
+      addEnhancement,
+      removeEnhancement,
+      renameEnhancement,
       mainCategories,
       subCategories,
       workTypes,
@@ -1310,6 +1420,10 @@ const ApiClientsConfigProvider = ({ children }: { children: ReactNode }) => {
       addClient,
       removeClient,
       renameClient,
+      enhancements,
+      addEnhancement,
+      removeEnhancement,
+      renameEnhancement,
       mainCategories,
       subCategories,
       workTypes,
