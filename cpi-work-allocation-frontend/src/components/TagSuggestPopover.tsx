@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
-import { Hash, AtSign } from "lucide-react";
+import { Hash, AtSign, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { AutocompleteItem } from "@/hooks/useTagAutocomplete";
+import type { AutocompleteItem, TagTrigger } from "@/hooks/useTagAutocomplete";
 
 /**
  * Presentational popover for tag/client autocomplete.
@@ -20,7 +20,7 @@ import type { AutocompleteItem } from "@/hooks/useTagAutocomplete";
 export interface TagSuggestPopoverProps {
   items: readonly AutocompleteItem[];
   activeIndex: number;
-  trigger: "#" | "@";
+  trigger: TagTrigger;
   /** Caret-top coordinate in the textarea's coordinate system. */
   top: number;
   /** Caret-left coordinate in the textarea's coordinate system. */
@@ -55,8 +55,9 @@ export const TagSuggestPopover = ({
 
   if (items.length === 0) return null;
 
-  const Icon = trigger === "#" ? Hash : AtSign;
-  const triggerLabel = trigger === "#" ? "Tag" : "Client";
+  const Icon = trigger === "#" ? Hash : trigger === "@" ? AtSign : Sparkles;
+  const triggerLabel =
+    trigger === "#" ? "Tag" : trigger === "@" ? "Client" : "Enhancement";
 
   return (
     <div

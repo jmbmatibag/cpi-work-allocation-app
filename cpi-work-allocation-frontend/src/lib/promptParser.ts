@@ -35,6 +35,12 @@ import {
 // Types
 // =====================================================================
 
+import {
+  ENHANCEMENT_SIGIL,
+  ENHANCEMENT_SIGIL_RE,
+  enhancementTagBody,
+} from "./tagHighlight";
+
 export interface ParsedTask {
   /** Unique ID for React keying. Set by the parser on fan-out; generated at render time otherwise. */
   id?: string;
@@ -48,6 +54,14 @@ export interface ParsedTask {
   subCategory: string | null;
   workType: string;
   client: string;
+  /**
+   * Structured enhancement tag lifted from a `$Name` token in the text.
+   * Only ever a canonical roster name — see applyEnhancementTags.
+   *
+   * Optional so the parser's nine task-emission branches don't each have to
+   * set it; the single post-pass fills it in and consumers read `?? null`.
+   */
+  enhancementTag?: string | null;
   description: string;
   percentage: number;
 }
@@ -148,6 +162,12 @@ export interface ParseOptions {
    * hardcoded tag hints + main category tags work.
    */
   taxonomy?: TaxonomySnapshot;
+  /**
+   * Live Enhancement roster. When supplied, a `$Name` token in the text is
+   * lifted onto ParsedTask.enhancementTag and removed from the description.
+   * Omitted (or empty) means `$` is treated as ordinary punctuation.
+   */
+  enhancementTags?: readonly string[];
 }
 
 // =====================================================================
@@ -825,6 +845,54 @@ export function filterOfficialClients(
  * the source text (within a format; hierarchical headers consume all
  * their following bullets before the loop advances).
  */
+// =====================================================================
+// Enhancement tokens (`$AXA-MTC`)
+// =====================================================================
+
+/**
+ * Lift `$Name` tokens off each task's description onto `enhancementTag`.
+ *
+ * Runs as ONE pass over the finished results rather than being threaded
+ * through the parser's nine task-emission points. That is deliberate: none of
+ * those branches strip unrecognised tokens, so the sigil survives every path
+ * (structured, hierarchical, natural, fan-out) and arrives here intact. One
+ * insertion point is also one place to get the stripping right.
+ *
+ * Only roster names match — `enhancementTagBody` builds no single-word
+ * fallback — so "$whatever" stays in the description as literal text instead
+ * of becoming an unvalidated value in Finance's column. The stored tag is the
+ * CANONICAL roster spelling, not what the user typed.
+ */
+export function applyEnhancementTags(
+  tasks: readonly ParsedTask[],
+  roster: readonly string[],
+): ParsedTask[] {
+  const body = enhancementTagBody(roster);
+  if (!body) return tasks.map((t) => ({ ...t }));
+
+  const find = new RegExp(`(?<![A-Za-z0-9])${ENHANCEMENT_SIGIL_RE}${body}`, "i");
+  // Also eat one trailing space so removing a token doesn't leave a double gap.
+  const strip = new RegExp(`(?<![A-Za-z0-9])${ENHANCEMENT_SIGIL_RE}${body}\\s?`, "gi");
+
+  return tasks.map((task) => {
+    const hit = task.description.match(find);
+    if (!hit) return { ...task };
+
+    // Map the typed text back to its canonical roster spelling: the user may
+    // have typed "!axa smart claims" for "AXA-SMART CLAIMS".
+    const typed = hit[0].slice(ENHANCEMENT_SIGIL.length);
+    const canonical =
+      roster.find((name) => new RegExp(`^${enhancementTagBody([name])}$`, "i").test(typed)) ??
+      null;
+
+    return {
+      ...task,
+      enhancementTag: canonical,
+      description: task.description.replace(strip, "").replace(/\s{2,}/g, " ").trim(),
+    };
+  });
+}
+
 export function parseWorkAllocation(
   text: string,
   options: ParseOptions,
@@ -835,6 +903,7 @@ export function parseWorkAllocation(
     knownClients = [],
     fallbackClient = "N/A",
     taxonomy,
+    enhancementTags = [],
   } = options;
 
   const lines = preprocessMultiWordTags(text, taxonomy)
@@ -1230,5 +1299,7 @@ export function parseWorkAllocation(
     i++;
   }
 
-  return results;
+  // Single post-pass: lift `$Name` tokens onto enhancementTag. Every emission
+  // branch above leaves the token in the description, so this catches them all.
+  return applyEnhancementTags(results, enhancementTags);
 }

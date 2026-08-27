@@ -34,7 +34,14 @@ import {
 } from "@/components/ui/tooltip";
 import WorkspaceTipModal from "@/components/WorkspaceTipModal";
 import { getOnboardingGuide } from "@/lib/onboardingGuides";
-import { buildHighlightRegex, multiWordTagPattern, renderTagged } from "@/lib/tagHighlight";
+import {
+  buildHighlightRegex,
+  multiWordTagPattern,
+  renderTagged,
+  ENHANCEMENT_SIGIL,
+  ENHANCEMENT_SIGIL_RE,
+} from "@/lib/tagHighlight";
+import { normalizeEnhancementTag } from "cpi-work-allocation-shared";
 import {
   Save,
   BookOpen,
@@ -47,6 +54,7 @@ import {
   Trash2,
   LogOut,
   Lightbulb,
+  Sparkles,
   Copy,
   Check,
 } from "lucide-react";
@@ -155,10 +163,21 @@ function readDraftTexts(employeeId: string, dateKey: string): string[] | null {
 
 const CLIENT_TAG_RE = /(?<![A-Za-z0-9])@([A-Za-z][A-Za-z0-9_-]*)/g;
 const CATEGORY_TAG_RE = /(?<![A-Za-z0-9])#([A-Za-z][A-Za-z0-9_/-]*)/g;
+/**
+ * DETECTION-only pattern for enhancement tags — deliberately LOOSER than the
+ * roster-driven parse pattern (enhancementTagBody), which matches known names
+ * only. We need to see `$Typo` in order to warn about it; the strict pattern
+ * would render it invisible and the user would get no signal at all.
+ */
+const ENHANCEMENT_TAG_RE = new RegExp(
+  `(?<![A-Za-z0-9])${ENHANCEMENT_SIGIL_RE}([A-Za-z][A-Za-z0-9_/-]*)`,
+  "g",
+);
 
 function extractTokens(
   text: string,
   knownMultiWordTags: readonly string[] = [],
+  enhancementRoster: readonly string[] = [],
 ) {
   let processed = text;
   // Map from hyphen-slug (lowercased) → canonical taxonomy name, so a
@@ -180,14 +199,39 @@ function extractTokens(
     canonicalBySlug.set(slug.toLowerCase(), name);
     processed = processed.replace(re, "#" + slug);
   }
+  // Same slug trick for multi-word ENHANCEMENT names, so "$AXA-SMART CLAIMS"
+  // (or "$axa smart claims") is detected whole instead of truncating at the
+  // first space and reading as an unmapped "AXA-SMART".
+  const enhancementBySlug = new Map<string, string>();
+  for (const name of [...enhancementRoster].sort((a, b) => b.length - a.length)) {
+    const pattern = multiWordTagPattern(name);
+    if (!pattern) continue;
+    const re = new RegExp(
+      `(?<![A-Za-z0-9])${ENHANCEMENT_SIGIL_RE}${pattern}(?![A-Za-z0-9])`,
+      "gi",
+    );
+    const slug = name.replace(/[^A-Za-z0-9/]+/g, "-").replace(/^-|-$/g, "");
+    enhancementBySlug.set(slug.toLowerCase(), name);
+    processed = processed.replace(re, ENHANCEMENT_SIGIL + slug);
+  }
+
   const clients = new Set<string>();
   const categories = new Set<string>();
+  const enhancements = new Set<string>();
   for (const m of processed.matchAll(CLIENT_TAG_RE)) clients.add(m[1]);
   for (const m of processed.matchAll(CATEGORY_TAG_RE)) {
     const canonical = canonicalBySlug.get(m[1].toLowerCase());
     categories.add(canonical ?? m[1].replace(/-/g, " "));
   }
-  return { clients: [...clients], categories: [...categories] };
+  for (const m of processed.matchAll(ENHANCEMENT_TAG_RE)) {
+    const canonical = enhancementBySlug.get(m[1].toLowerCase());
+    enhancements.add(canonical ?? m[1].replace(/-/g, " "));
+  }
+  return {
+    clients: [...clients],
+    categories: [...categories],
+    enhancements: [...enhancements],
+  };
 }
 
 // ── SmartJournalLine ──────────────────────────────────────────────────────────
@@ -200,6 +244,7 @@ interface SmartJournalLineProps {
   validation: LineValidation;
   tagItems: readonly AutocompleteItem[];
   clientItems: readonly AutocompleteItem[];
+  enhancementItems: readonly AutocompleteItem[];
   autoFocus?: boolean;
   onChange: (text: string) => void;
   onEnter: () => void;
@@ -215,6 +260,7 @@ function SmartJournalLine({
   validation,
   tagItems,
   clientItems,
+  enhancementItems,
   autoFocus,
   onChange,
   onEnter,
@@ -236,8 +282,12 @@ function SmartJournalLine({
   // Skip rendering when the line is invalid (red text) or time-only (mono font)
   // so those states keep their own visual treatment.
   const highlightRegex = useMemo(
-    () => buildHighlightRegex(tagItems.filter((i) => /[^A-Za-z0-9]/.test(i.value)).map((i) => i.value)),
-    [tagItems],
+    () =>
+      buildHighlightRegex(
+        tagItems.filter((i) => /[^A-Za-z0-9]/.test(i.value)).map((i) => i.value),
+        enhancementItems.map((i) => i.value),
+      ),
+    [tagItems, enhancementItems],
   );
   const taggedContent = useMemo(
     () => renderTagged(text, highlightRegex),
@@ -280,6 +330,7 @@ function SmartJournalLine({
   const autocomplete = useTagAutocomplete({
     tagItems,
     clientItems,
+    enhancementItems,
     value: text,
     caret,
     onReplace: handleReplace,
@@ -555,7 +606,7 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
 const DailyJournal = () => {
   const { currentUser } = useAuth();
   const { getEntry, saveEntry, getDatesWithEntries } = useJournal();
-  const { mainCategories, subCategories, clients } = useClientsConfig();
+  const { mainCategories, subCategories, clients, enhancements } = useClientsConfig();
   const { setGuard } = useUnsavedChangesGuard();
 
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
@@ -710,6 +761,16 @@ const DailyJournal = () => {
     [clients],
   );
 
+  // `!` suggestions come straight off the Enhancement roster, so a journal
+  // line can only carry a tag Finance will recognise.
+  const enhancementItems = useMemo<AutocompleteItem[]>(
+    () =>
+      [...enhancements]
+        .sort((a, b) => a.localeCompare(b))
+        .map((e) => ({ value: e, label: e, sublabel: "enhancement" })),
+    [enhancements],
+  );
+
   // ── Timeline resolution ──────────────────────────────────────────────
 
   const resolvedLines = useMemo(
@@ -824,8 +885,8 @@ const DailyJournal = () => {
   );
 
   const tokens = useMemo(
-    () => extractTokens(combinedText, knownTagNames),
-    [combinedText, knownTagNames],
+    () => extractTokens(combinedText, knownTagNames, enhancements),
+    [combinedText, knownTagNames, enhancements],
   );
 
   // ── Unmapped-tag detection ───────────────────────────────────────────
@@ -850,8 +911,23 @@ const DailyJournal = () => {
     return tokens.categories.filter((c) => !known.has(c.toLowerCase()));
   }, [tokens.categories, knownTagNames]);
 
+  // Enhancements are the STRICTEST of the three. An unmapped @client still
+  // reaches the card as a custom client, and an unmapped #category falls back
+  // to keyword classification — but an off-roster $tag is ignored outright:
+  // it stays literal text and Finance's Enhancement column comes out blank.
+  // So this badge is the only signal the user gets, which is why detection is
+  // deliberately looser than parsing.
+  const unmappedEnhancements = useMemo(() => {
+    const known = new Set(enhancements.map(normalizeEnhancementTag));
+    return tokens.enhancements.filter(
+      (e) => !known.has(normalizeEnhancementTag(e)),
+    );
+  }, [tokens.enhancements, enhancements]);
+
   const hasUnmapped =
-    unmappedClients.length > 0 || unmappedCategories.length > 0;
+    unmappedClients.length > 0 ||
+    unmappedCategories.length > 0 ||
+    unmappedEnhancements.length > 0;
 
   // ── Line CRUD ─────────────────────────────────────────────────────────
 
@@ -1093,7 +1169,18 @@ const DailyJournal = () => {
                     <p className="font-medium text-foreground mb-1">Tagging</p>
                     <p>
                       Type <span className="font-mono text-foreground">@</span>{" "}
-                      for client or <span className="font-mono text-foreground">#</span> for category — a suggestion popover appears.
+                      for client, <span className="font-mono text-foreground">#</span> for category, or{" "}
+                      <span className="font-mono text-foreground">{ENHANCEMENT_SIGIL}</span> for a specific
+                      enhancement — a suggestion popover appears.
+                    </p>
+                    <p className="mt-1">
+                      e.g.{" "}
+                      <span className="font-mono text-foreground">
+                        9:17am @AUII #Geniisys {ENHANCEMENT_SIGIL}AXA-MTC payout fix
+                      </span>
+                    </p>
+                    <p className="mt-1">
+                      Only enhancement names on the Admin roster are recognised; anything else stays plain text.
                     </p>
                   </div>
                 </div>
@@ -1172,6 +1259,7 @@ const DailyJournal = () => {
                   }
                   tagItems={tagItems}
                   clientItems={clientItems}
+                  enhancementItems={enhancementItems}
                   autoFocus={focusId === rl.id}
                   onChange={(text) => updateLine(rl.id, text)}
                   onEnter={() => addLine(i)}
@@ -1221,7 +1309,9 @@ const DailyJournal = () => {
         </div>
 
         {/* Detected tags strip */}
-        {(tokens.clients.length > 0 || tokens.categories.length > 0) && (
+        {(tokens.clients.length > 0 ||
+          tokens.categories.length > 0 ||
+          tokens.enhancements.length > 0) && (
           <TooltipProvider delayDuration={150}>
             <div className="px-8 py-3 border-t border-border/30 bg-muted/10 flex flex-wrap items-center gap-2 shrink-0">
               <span className="text-[11px] text-muted-foreground/60 mr-1">
@@ -1307,10 +1397,57 @@ const DailyJournal = () => {
                   <span key={`k-${c}`}>{badge}</span>
                 );
               })}
+              {tokens.enhancements.map((e) => {
+                const isUnmapped = unmappedEnhancements.includes(e);
+                const badge = (
+                  <Badge
+                    variant="secondary"
+                    className={cn(
+                      "gap-1 text-[11px]",
+                      isUnmapped
+                        ? "bg-warning/10 text-warning hover:bg-warning/20 border-warning/30 cursor-help"
+                        : "bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/15 border-amber-500/20",
+                    )}
+                  >
+                    <Sparkles className="h-2.5 w-2.5" />
+                    {e}
+                    {isUnmapped && <Lightbulb className="h-2.5 w-2.5 ml-0.5" />}
+                  </Badge>
+                );
+                return isUnmapped ? (
+                  <Tooltip key={`e-${e}`}>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">{badge}</span>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <p className="text-xs">
+                        <span className="font-semibold">
+                          {ENHANCEMENT_SIGIL}
+                          {e}
+                        </span>{" "}
+                        isn't on the enhancement roster, so it will be{" "}
+                        <span className="font-semibold">ignored</span> &mdash; unlike
+                        an unmapped client, it won't carry through as a custom value.
+                        Finance's Enhancement column will be blank. Check the spelling,
+                        or ask an admin to add it under{" "}
+                        <span className="font-mono">
+                          Settings → Taxonomy → Enhancements
+                        </span>
+                        .
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <span key={`e-${e}`}>{badge}</span>
+                );
+              })}
               {hasUnmapped && (
                 <span className="ml-auto text-[11px] text-warning flex items-center gap-1">
                   <Lightbulb className="h-3 w-3" />
-                  {unmappedClients.length + unmappedCategories.length} unmapped
+                  {unmappedClients.length +
+                    unmappedCategories.length +
+                    unmappedEnhancements.length}{" "}
+                  unmapped
                   &mdash; hover for details
                 </span>
               )}

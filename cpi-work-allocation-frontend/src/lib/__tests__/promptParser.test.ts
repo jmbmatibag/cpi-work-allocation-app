@@ -13,6 +13,13 @@ import {
 
 const KNOWN_CLIENTS = ["AUII", "PNBGEN", "UCPB", "CIC"] as const;
 
+// Mirrors the live Enhancement roster's CLIENT-FEATURE naming convention.
+const ENH_ROSTER = [
+  "AXA-MTC",
+  "AXA-SMART CLAIMS",
+  "WGC-PLATE NUMBER VALIDATION",
+] as const;
+
 const baseOptions = {
   defaultTeam: "IT/Platforms",
   knownClients: KNOWN_CLIENTS,
@@ -437,7 +444,7 @@ describe("round-trip: journal aggregation → prompt → parse", () => {
       );
       expect(
         match,
-        `missing round-trip match for client=${item.client} pct=${item.pct}`,
+        `missing round-trip match for client=>{item.client} pct=>{item.pct}`,
       ).toBeDefined();
     }
   });
@@ -1347,5 +1354,68 @@ describe("parseWorkAllocation — fan-out excludes custom clients", () => {
     // Falls through to a single non-fanned card at the full percentage.
     expect(result).toHaveLength(1);
     expect(result[0].percentage).toBe(40);
+  });
+});
+
+describe("enhancement tokens ($Name)", () => {
+  const opts = { ...baseOptions, enhancementTags: ENH_ROSTER };
+
+  it("lifts the token onto enhancementTag and strips it from the description", () => {
+    const [task] = parseWorkAllocation("- $AXA-MTC payout screen fix - 40%", opts);
+    expect(task.enhancementTag).toBe("AXA-MTC");
+    // Token removed, no double space left behind.
+    expect(task.description).toBe("payout screen fix");
+    expect(task.description).not.toContain("$");
+  });
+
+  it("stores the CANONICAL roster spelling, not what was typed", () => {
+    // Roster is "AXA-SMART CLAIMS"; the user typed it spaced and lowercase.
+    const [task] = parseWorkAllocation("- $axa smart claims regression - 20%", opts);
+    expect(task.enhancementTag).toBe("AXA-SMART CLAIMS");
+  });
+
+  it("leaves an off-roster token alone rather than inventing a tag", () => {
+    // No single-word fallback: an unvalidated string must never reach the
+    // Finance column, so "$whatever" stays as literal description text.
+    const [task] = parseWorkAllocation("- $whatever some work - 10%", opts);
+    expect(task.enhancementTag ?? null).toBeNull();
+    expect(task.description).toContain("$whatever");
+  });
+
+  it("treats $ as ordinary punctuation when no roster is supplied", () => {
+    const [task] = parseWorkAllocation("- $AXA-MTC payout fix - 40%", baseOptions);
+    expect(task.enhancementTag ?? null).toBeNull();
+    expect(task.description).toContain("$AXA-MTC");
+  });
+
+  it("is inert on currency amounts", () => {
+    // A trigger must be followed by a name ON THE ROSTER, so money stays money.
+    for (const line of [
+      "- spent $500 on licences - 15%",
+      "- saved $1.2M this quarter - 15%",
+      "- billed $AXA for the work - 15%",
+    ]) {
+      const [task] = parseWorkAllocation(line, opts);
+      expect(task.enhancementTag ?? null).toBeNull();
+      expect(task.description).toContain("$");
+    }
+  });
+
+  it("escapes the sigil rather than compiling it as a regex anchor", () => {
+    // `$` is a regex metacharacter. Unescaped it means end-of-string, and
+    // every enhancement pattern would silently match nothing. This test fails
+    // loudly if ENHANCEMENT_SIGIL_RE is ever bypassed.
+    const [task] = parseWorkAllocation("- $AXA-MTC mid-line work - 25%", opts);
+    expect(task.enhancementTag).toBe("AXA-MTC");
+  });
+
+  it("coexists with #category and @client tags on the same line", () => {
+    const [task] = parseWorkAllocation(
+      "- #Geniisys Specific Enhancement $AXA-MTC payout screen fix @AUII - 30%",
+      { ...opts, knownClients: KNOWN_CLIENTS },
+    );
+    expect(task.enhancementTag).toBe("AXA-MTC");
+    expect(task.client).toBe("AUII");
+    expect(task.description).not.toContain("$AXA-MTC");
   });
 });

@@ -1,5 +1,8 @@
 import { BookOpen, CalendarRange, ClipboardCheck, type LucideIcon } from "lucide-react";
 import type { TipSection } from "@/components/WorkspaceTipModal";
+// Imported rather than hardcoded: the guide copy and the parser must never
+// disagree about which character starts an enhancement tag.
+import { ENHANCEMENT_SIGIL } from "@/lib/tagHighlight";
 
 /**
  * Single source of truth for the in-app onboarding guides.
@@ -35,11 +38,15 @@ export const ONBOARDING_GUIDES: OnboardingGuide[] = [
     tips: [
       {
         heading: "Use tagging shortcuts",
-        body: "To ensure the system understands your log clearly, use tagging shortcuts (e.g., @ClientName and #CategoryName) when logging a project or client.",
+        body: `To ensure the system understands your log clearly, use tagging shortcuts when logging a project or client: @ClientName for a client, #CategoryName for a work category, and ${ENHANCEMENT_SIGIL}EnhancementName for a specific enhancement. Typing any of the three opens a suggestion list.`,
+      },
+      {
+        heading: "Tag a specific enhancement",
+        body: `When the work is a Specific Enhancement, add ${ENHANCEMENT_SIGIL}EnhancementName — for example "9:17am @AUII #Geniisys ${ENHANCEMENT_SIGIL}AXA-MTC payout fix". Only names on the Admin roster (Settings → Taxonomy → Enhancements) are recognised; anything else stays plain text. Tagging it here carries straight through to your monthly allocation and to Finance's Enhancement column.`,
       },
       {
         heading: "Timeline entries",
-        body: 'Start a line with a time like "9:17am @ClientName #CategoryName – description" to record a timed block. Use @ for clients and # for categories.',
+        body: `Start a line with a time like "9:17am @ClientName #CategoryName – description" to record a timed block. Use @ for clients, # for categories, and ${ENHANCEMENT_SIGIL} for enhancements.`,
       },
       {
         heading: "Range entries",
@@ -51,7 +58,11 @@ export const ONBOARDING_GUIDES: OnboardingGuide[] = [
       },
       {
         heading: "Auto-inference",
-        body: "Unrecognised @tags and #tags are flagged with a warning badge. An admin can map them in Settings so future entries resolve correctly.",
+        body: `Every tag you type appears in the "Detected" strip below the editor. Unrecognised ones are flagged with a warning badge — hover it for details. An admin can map them in Settings so future entries resolve correctly.`,
+      },
+      {
+        heading: "What an unrecognised tag does",
+        body: `The three tags behave differently when they aren't registered. An unknown @client still reaches your allocation card as a custom client. An unknown #category falls back to keyword classification. An unknown ${ENHANCEMENT_SIGIL}enhancement is IGNORED outright — it stays plain text and Finance's Enhancement column comes out blank, so check the badge before saving.`,
       },
     ],
     note: "You can view these tips at any time by clicking the 'Tips' button next to the Save Entry button.",
@@ -71,6 +82,10 @@ export const ONBOARDING_GUIDES: OnboardingGuide[] = [
       {
         heading: "Edit allocation cards",
         body: "Each card represents a Work Stream. Drag to reorder, click a card to expand it, and adjust percentages so the total reaches 100%.",
+      },
+      {
+        heading: "Tag a specific enhancement",
+        body: `In the manual entry box, add ${ENHANCEMENT_SIGIL}EnhancementName to a line whose work type is Specific Enhancement — e.g. "#Geniisys Specific Enhancement ${ENHANCEMENT_SIGIL}AXA-MTC — payout screen fix @AXA". The card arrives pre-tagged. You can also set it on the card itself: choose Specific Enhancement as the Work Type and an Enhancement dropdown appears.`,
       },
       {
         heading: "Select the work period",

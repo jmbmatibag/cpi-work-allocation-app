@@ -77,6 +77,63 @@ export function categoryTagBody(names: readonly string[]): string {
 }
 
 /**
+ * The sigil that introduces an enhancement token: `$AXA-MTC`.
+ *
+ * CHANGE IT HERE AND NOWHERE ELSE — highlighting, autocomplete, parsing and
+ * stripping all read this constant.
+ *
+ * Why `$`: it follows the near-universal "$NAME is a named token" convention
+ * (shell, PHP, JS templates), so `$AXA-MTC` reads as a symbol standing for a
+ * known thing — which is exactly what it is. Compare `!` (reads as negation)
+ * and `+` (reads as "additional").
+ *
+ * Everything else was ruled out structurally: `#` and `@` are taken; `*`, `-`,
+ * `–` and `•` are journal bullet markers (LIST_MARKER_RE); `%` is percentage
+ * syntax; and `&`, `/`, `,` appear INSIDE taxonomy names so they can't
+ * introduce one. A scan of real log text (api/scripts/diagnose-sigil-
+ * collisions.ts) found zero existing uses of `$` in trigger position.
+ *
+ * Two things keep the currency reading harmless. A trigger must sit at the
+ * start of input or after whitespace AND be followed by a name ON THE ROSTER,
+ * so "$500 budget" and "$1.2M saved" stay literal text — no popover, no token.
+ *
+ * ⚠ `$` is a REGEX METACHARACTER (end-of-string). Every pattern built from
+ * this constant must go through ENHANCEMENT_SIGIL_RE below; a raw `$` would
+ * compile to a pattern that silently matches nothing.
+ */
+export const ENHANCEMENT_SIGIL = "$";
+
+/**
+ * Regex body matching an enhancement tag after the sigil.
+ *
+ * Roster-driven, exactly like categoryTagBody: each known name becomes a
+ * separator-tolerant alternate, longest-first, so "$AXA-SMART CLAIMS" is one
+ * token instead of stopping at the space. Unlike categories there is NO
+ * single-word fallback — an enhancement that isn't on the roster is not an
+ * enhancement, and silently accepting "$whatever" would put an unvalidated
+ * string into Finance's column.
+ *
+ * Returns null when the roster is empty or yields no usable alternates, which
+ * callers must treat as "no enhancement tokens exist".
+ */
+export function enhancementTagBody(roster: readonly string[]): string | null {
+  const alternates = [...roster]
+    .sort((a, b) => b.length - a.length)
+    .map(multiWordTagPattern)
+    .filter((p): p is string => p !== null);
+  return alternates.length > 0 ? `(?:${alternates.join("|")})` : null;
+}
+
+/**
+ * Escaped sigil, safe to embed in a regex source string.
+ *
+ * Load-bearing: the current sigil `$` is a regex metacharacter, so this is
+ * what stops every enhancement pattern from compiling to an end-of-string
+ * anchor that matches nothing.
+ */
+export const ENHANCEMENT_SIGIL_RE = ENHANCEMENT_SIGIL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
  * Build a highlight regex that includes known multi-word taxonomy names as
  * explicit alternates so "#Quick Policy" or "#Sales, Marketing & BD" is
  * highlighted as a single token rather than stopping at the first space or
@@ -86,11 +143,22 @@ export function categoryTagBody(names: readonly string[]): string {
  *                        "Sales, Marketing & BD"]). Pass an empty array when
  *                        unknown.
  */
-export function buildHighlightRegex(multiWordNames: readonly string[]): RegExp {
-  return new RegExp(
-    `(?<![A-Za-z0-9])(@[A-Za-z][A-Za-z0-9_-]*|#${categoryTagBody(multiWordNames)})`,
-    "g",
-  );
+export function buildHighlightRegex(
+  multiWordNames: readonly string[],
+  enhancementRoster: readonly string[] = [],
+): RegExp {
+  const enh = enhancementTagBody(enhancementRoster);
+  // Enhancement alternates come FIRST: they are exact roster names, so when
+  // one could also be read as a looser category body the specific match wins.
+  const parts = [
+    ...(enh ? [`${ENHANCEMENT_SIGIL_RE}${enh}`] : []),
+    `@[A-Za-z][A-Za-z0-9_-]*`,
+    `#${categoryTagBody(multiWordNames)}`,
+  ];
+  // "i" matters as much as "g": the PARSER matches tags case-insensitively, so
+  // without it a lowercase "@auii" or "$axa-mtc" would be tagged correctly yet
+  // show no colour — the user gets no feedback that their tag landed.
+  return new RegExp(`(?<![A-Za-z0-9])(${parts.join("|")})`, "gi");
 }
 
 /**
@@ -112,19 +180,28 @@ export function renderTagged(text: string, re: RegExp): ReactNode {
     if (m.index > last) {
       nodes.push(<span key={k++}>{text.slice(last, m.index)}</span>);
     }
-    const isAt = m[1][0] === "@";
+    const sigil = m[1][0];
+    const isAt = sigil === "@";
+    const isEnhancement = sigil === ENHANCEMENT_SIGIL;
     // box-shadow spreads the background 3px left/right without adding to the
     // element's layout width — keeping backdrop characters pixel-aligned with
     // the textarea so the caret stays in the correct visual position.
+    // green = @client, amber = !enhancement, orange = #category
     const shadow = isAt
       ? "3px 0 0 rgb(187 247 208 / 0.6), -3px 0 0 rgb(187 247 208 / 0.6)"
-      : "3px 0 0 rgb(254 215 170 / 0.6), -3px 0 0 rgb(254 215 170 / 0.6)";
+      : isEnhancement
+        ? "3px 0 0 rgb(253 230 138 / 0.7), -3px 0 0 rgb(253 230 138 / 0.7)"
+        : "3px 0 0 rgb(254 215 170 / 0.6), -3px 0 0 rgb(254 215 170 / 0.6)";
     nodes.push(
       <mark
         key={k++}
         className={cn(
           "rounded-[3px] not-italic",
-          isAt ? "bg-green-200/60" : "bg-orange-200/60",
+          isAt
+            ? "bg-green-200/60"
+            : isEnhancement
+              ? "bg-amber-200/70"
+              : "bg-orange-200/60",
         )}
         style={{ boxShadow: shadow }}
       >

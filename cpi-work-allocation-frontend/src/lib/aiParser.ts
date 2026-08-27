@@ -32,6 +32,7 @@
 import type { ParsedTask, TaxonomySnapshot, InferenceRule } from "@/lib/promptParser";
 import {
   parseWorkAllocation,
+  applyEnhancementTags,
   LEGACY_TAG_HINTS,
   filterOfficialClients,
 } from "@/lib/promptParser";
@@ -66,6 +67,12 @@ export interface AIParseOptions {
    * so tagged cards for custom work types come back blank.
    */
   inferenceRules?: readonly InferenceRule[];
+  /**
+   * Live Enhancement roster. Drives the `$Name` token: the AI path and the
+   * rule path both get the same treatment, so a tag typed in the prompt box
+   * lands on the card regardless of which parser produced it.
+   */
+  enhancementTags?: readonly string[];
   /**
    * When true, skips the API call and uses the rule parser directly.
    * Used for testing and for explicit user opt-out.
@@ -525,7 +532,25 @@ function parseDynamicAllocations(
  * Returns `{tasks, source}` — callers use `source` to display an AI
  * badge on generated cards when source === 'ai'.
  */
+/**
+ * Public entry point. Wraps the parsing pipeline so `$Name` enhancement
+ * tokens are lifted onto `enhancementTag` on EVERY return path — dynamic
+ * pre-pass, AI path, and rule fallback alike — rather than at each of the
+ * six `return` statements inside. `applyEnhancementTags` is idempotent, so
+ * the rule path running it internally too is harmless.
+ */
 export async function parseWithAI(
+  text: string,
+  opts: AIParseOptions,
+): Promise<AIParseResult> {
+  const result = await parseWithAIInner(text, opts);
+  return {
+    ...result,
+    tasks: applyEnhancementTags(result.tasks, opts.enhancementTags ?? []),
+  };
+}
+
+async function parseWithAIInner(
   text: string,
   opts: AIParseOptions,
 ): Promise<AIParseResult> {
@@ -921,6 +946,7 @@ function runRuleParser(text: string, opts: AIParseOptions): ParsedTask[] {
     knownClients: opts.knownClients,
     fallbackClient: opts.fallbackClient,
     taxonomy: opts.taxonomy,
+    enhancementTags: opts.enhancementTags,
     // Pass the live DB rules so the fallback can detect custom work types.
     // Omit (→ DEFAULT_INFERENCE_RULES) only when none are configured.
     ...(opts.inferenceRules && opts.inferenceRules.length > 0

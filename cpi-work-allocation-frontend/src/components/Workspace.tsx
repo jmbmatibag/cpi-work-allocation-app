@@ -472,6 +472,7 @@ const Workspace = ({
         workTypes,
         taxonomy,
         inferenceRules,
+        enhancementTags: enhancements,
       });
 
       if (result.aiErrorMessage) {
@@ -566,9 +567,9 @@ const Workspace = ({
         workCategory: a.workCategory,
         subCategory: a.subCategory,
         workType: a.workType,
-        // The parser has no notion of enhancement tags; the user picks one on
-        // the card. Blank over a guessed default.
-        enhancementTag: null,
+        // Set when the text carried a `$Name` token; null otherwise, so the
+        // user picks it on the card. Blank over a guessed default.
+        enhancementTag: a.enhancementTag ?? null,
         client: a.client,
         description: normalizeDescription(a.description, a.client),
         percentage: a.percentage,

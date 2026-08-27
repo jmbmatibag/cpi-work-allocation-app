@@ -14,7 +14,11 @@ import {
 import { useCaretPosition } from "@/hooks/useCaretPosition";
 import { TagSuggestPopover } from "@/components/TagSuggestPopover";
 import { useClientsConfig } from "@/contexts/ClientsConfigContext";
-import { buildHighlightRegex, renderTagged } from "@/lib/tagHighlight";
+import {
+  buildHighlightRegex,
+  renderTagged,
+  ENHANCEMENT_SIGIL,
+} from "@/lib/tagHighlight";
 
 interface AIPromptBoxProps {
   onSubmit: (text: string) => void;
@@ -52,7 +56,8 @@ const AIPromptBox = ({
   const backdropRef = useRef<HTMLDivElement>(null);
   const measureCaret = useCaretPosition();
 
-  const { clients, categories: mainCategories, subCategories } = useClientsConfig();
+  const { clients, categories: mainCategories, subCategories, enhancements } =
+    useClientsConfig();
 
   const tagItems = useMemo<AutocompleteItem[]>(() => {
     const items: AutocompleteItem[] = [];
@@ -67,6 +72,16 @@ const AIPromptBox = ({
   const clientItems = useMemo<AutocompleteItem[]>(
     () => [...clients].sort((a, b) => a.localeCompare(b)).map((c) => ({ value: c, label: c })),
     [clients],
+  );
+
+  // `!` suggestions come straight off the Enhancement roster, so the only
+  // values a user can insert are ones Finance will recognise.
+  const enhancementItems = useMemo<AutocompleteItem[]>(
+    () =>
+      [...enhancements]
+        .sort((a, b) => a.localeCompare(b))
+        .map((e) => ({ value: e, label: e, sublabel: "enhancement" })),
+    [enhancements],
   );
 
   // Dirty-guarded initialText sync — only overwrites when the user hasn't edited.
@@ -97,6 +112,7 @@ const AIPromptBox = ({
   const autocomplete = useTagAutocomplete({
     tagItems,
     clientItems,
+    enhancementItems,
     value: text,
     caret,
     onReplace: handleReplace,
@@ -124,8 +140,12 @@ const AIPromptBox = ({
   }, []);
 
   const highlightRegex = useMemo(
-    () => buildHighlightRegex(tagItems.filter((i) => /[^A-Za-z0-9]/.test(i.value)).map((i) => i.value)),
-    [tagItems],
+    () =>
+      buildHighlightRegex(
+        tagItems.filter((i) => /[^A-Za-z0-9]/.test(i.value)).map((i) => i.value),
+        enhancements,
+      ),
+    [tagItems, enhancements],
   );
 
   const taggedContent = useMemo(
@@ -190,7 +210,7 @@ Task Title/Header :
         </p>
         <p className="font-semibold text-sm text-foreground mt-4">Use tagging shortcuts</p>
         <p className="text-xs text-muted-foreground mt-1">
-          To ensure the system understands your log clearly, use tagging shortcuts when specifying a client or category:
+          To ensure the system understands your log clearly, use tagging shortcuts when specifying a client, category or enhancement:
         </p>
         <ul className="mt-2 space-y-1 text-xs text-foreground">
           <li className="flex items-center gap-2">
@@ -201,7 +221,18 @@ Task Title/Header :
             <mark className="bg-orange-200/60 dark:bg-orange-900/50 dark:text-orange-300 rounded-[3px] px-1 not-italic font-mono">#CategoryName</mark>
             <span className="text-muted-foreground">— tag a work category</span>
           </li>
+          <li className="flex items-center gap-2">
+            <mark className="bg-amber-200/70 dark:bg-amber-900/50 dark:text-amber-300 rounded-[3px] px-1 not-italic font-mono">
+              {ENHANCEMENT_SIGIL}EnhancementName
+            </mark>
+            <span className="text-muted-foreground">— tag a specific enhancement</span>
+          </li>
         </ul>
+        <p className="text-xs text-muted-foreground mt-2">
+          Enhancement tags only apply to <span className="text-foreground">Specific Enhancement</span> work, and
+          only names on the Admin roster are recognised. Finance reads this as its own column, so tagging here
+          saves picking it on the card later.
+        </p>
       </PopoverContent>
     </Popover>
   );

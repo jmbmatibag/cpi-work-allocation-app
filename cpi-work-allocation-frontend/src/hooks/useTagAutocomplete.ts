@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
+import { ENHANCEMENT_SIGIL } from "@/lib/tagHighlight";
 
 /**
  * Autocomplete state + behavior for a textarea where `#tag` and
@@ -12,6 +13,9 @@ import { useState, useCallback, useMemo, useEffect } from "react";
  * It does NOT manage DOM positioning (see useCaretPosition) or
  * render anything (see TagSuggestPopover).
  */
+
+/** Sigils that can open a suggestion popover. */
+export type TagTrigger = "#" | "@" | typeof ENHANCEMENT_SIGIL;
 
 export interface AutocompleteItem {
   /** Text inserted into the textarea, without the trigger char. */
@@ -27,6 +31,12 @@ export interface UseTagAutocompleteArgs {
   tagItems: readonly AutocompleteItem[];
   /** Items to suggest when @ is typed. */
   clientItems: readonly AutocompleteItem[];
+  /**
+   * Items to suggest when the enhancement sigil is typed. Optional: surfaces
+   * that have no enhancement concept simply omit it and the trigger stays
+   * inert rather than opening an empty popover.
+   */
+  enhancementItems?: readonly AutocompleteItem[];
   /** The current textarea value. */
   value: string;
   /** Current caret position (end of selection). */
@@ -37,7 +47,7 @@ export interface UseTagAutocompleteArgs {
 
 export interface ActiveToken {
   /** Which popover is open. */
-  trigger: "#" | "@";
+  trigger: TagTrigger;
   /** Character index where the trigger char sits. */
   start: number;
   /** Character index where the active token ends (i.e. `caret`). */
@@ -69,6 +79,7 @@ export interface UseTagAutocompleteReturn {
 export function useTagAutocomplete({
   tagItems,
   clientItems,
+  enhancementItems,
   value,
   caret,
   onReplace,
@@ -88,7 +99,10 @@ export function useTagAutocomplete({
     let i = caret - 1;
     while (i >= 0) {
       const ch = value[i];
-      if (ch === "#" || ch === "@") {
+      // The enhancement sigil only counts as a trigger when the surface
+      // actually supplied a roster; otherwise "!" is ordinary punctuation.
+      const isEnhTrigger = ch === ENHANCEMENT_SIGIL && !!enhancementItems?.length;
+      if (ch === "#" || ch === "@" || isEnhTrigger) {
         // Trigger char must be at start of input or after whitespace.
         // Matches the parser's TAG_RE / @client token rules.
         const prev = i === 0 ? " " : value[i - 1];
@@ -98,7 +112,7 @@ export function useTagAutocomplete({
         if (dismissedAt === i) return null;
 
         return {
-          trigger: ch as "#" | "@",
+          trigger: ch as TagTrigger,
           start: i,
           end: caret,
           query: value.substring(i + 1, caret),
@@ -108,7 +122,7 @@ export function useTagAutocomplete({
       i--;
     }
     return null;
-  }, [value, caret, dismissedAt]);
+  }, [value, caret, dismissedAt, enhancementItems]);
 
   // Filter suggestions. Case-insensitive prefix match on the label,
   // then case-insensitive substring match as a fallback. Prefix
@@ -116,7 +130,12 @@ export function useTagAutocomplete({
   // matches cover cases like "bd" → "BD/Mktg/Sales".
   const suggestions = useMemo(() => {
     if (!active) return [];
-    const pool = active.trigger === "#" ? tagItems : clientItems;
+    const pool =
+      active.trigger === "#"
+        ? tagItems
+        : active.trigger === "@"
+          ? clientItems
+          : (enhancementItems ?? []);
     const q = active.query.toLowerCase();
     if (!q) return pool.slice(0, 10);
 
@@ -128,7 +147,7 @@ export function useTagAutocomplete({
       else if (lbl.includes(q)) contains.push(item);
     }
     return [...prefix, ...contains].slice(0, 10);
-  }, [active, tagItems, clientItems]);
+  }, [active, tagItems, clientItems, enhancementItems]);
 
   // Keep activeIndex in range as suggestions change. Use effect so
   // we don't set state during render.
