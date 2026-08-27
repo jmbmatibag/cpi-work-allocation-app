@@ -47,4 +47,35 @@ export declare function isSpecificEnhancement(workType: string | null | undefine
 export declare function isKnownEnhancementTag(value: string | null | undefined, roster: readonly string[]): boolean;
 /** Comparison key for a tag: trimmed, whitespace-collapsed, lower-cased. */
 export declare function normalizeEnhancementTag(value: string): string;
+export declare function buildEnhancementMatchers(roster: readonly string[]): ReadonlyArray<readonly [string, RegExp]>;
+/**
+ * Historical fallback — recover the enhancement name from free text.
+ *
+ * Rows logged before `enhancementTag` existed carry the name only inside the
+ * description. Returns null when nothing matches: this column gates Finance's
+ * own review, so a guessed tag would pass that review unchecked while a blank
+ * is visibly incomplete.
+ *
+ * `roster` is required, not defaulted. Defaulting it to the constants above is
+ * exactly how the inference-rule bug hid for weeks — the parser looked healthy
+ * while silently ignoring everything the admin had configured.
+ */
+export declare function extractEnhancementTag(description: string, roster: readonly string[]): string | null;
+/** Minimal shape both export pipelines can satisfy. */
+export interface EnhancementResolvable {
+    workType: string;
+    enhancementTag?: string | null;
+    description: string;
+}
+/**
+ * Hybrid resolution, most-trusted source first:
+ *
+ *   1. The stored tag — a human picked it from the roster. Authoritative, and
+ *      returned even if an admin has since removed it: the historical record
+ *      of what was logged outranks today's list.
+ *   2. Description parse — ONLY for Specific Enhancement rows, so an unrelated
+ *      task that merely mentions a tag in passing is never mislabelled.
+ *   3. Blank.
+ */
+export declare function resolveEnhancementTag(row: EnhancementResolvable, roster: readonly string[]): string;
 //# sourceMappingURL=enhancementTags.d.ts.map

@@ -57,6 +57,7 @@ export type ExportColumn =
   | "workCategory"
   | "subCategory"
   | "workType"
+  | "enhancement"
   | "client"
   | "description"
   | "percentage";
@@ -70,6 +71,7 @@ export const ALL_EXPORT_COLUMNS: readonly ExportColumn[] = [
   "workCategory",
   "subCategory",
   "workType",
+  "enhancement",
   "client",
   "description",
   "percentage",
@@ -89,6 +91,7 @@ export const EXPORT_COLUMN_LABELS: Record<ExportColumn, string> = {
   workCategory: "Category",
   subCategory: "Sub Category",
   workType: "Work Type",
+  enhancement: "Enhancement",
   client: "Client",
   description: "Description",
   percentage: "%",

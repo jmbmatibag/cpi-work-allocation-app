@@ -23,6 +23,13 @@ export interface SourceActivityRow {
   workCategory: string;
   subCategory: string | null;
   workType: string;
+  /**
+   * Resolved Enhancement value, already through the same
+   * stored-tag -> description-parse -> blank chain the API's Finance CSV
+   * uses. Resolved by the caller (which holds the live roster) so this
+   * module stays free of taxonomy lookups.
+   */
+  enhancement: string;
   client: string;
   description: string;
   percentage: number;
@@ -75,6 +82,7 @@ export function buildExportRows(
         case "workCategory": cells[col] = a.workCategory; break;
         case "subCategory":  cells[col] = a.subCategory ?? ""; break;
         case "workType":     cells[col] = a.workType; break;
+        case "enhancement":  cells[col] = a.enhancement; break;
         case "client":       cells[col] = a.client; break;
         case "description":  cells[col] = a.description; break;
         case "percentage":   cells[col] = a.percentage; break;

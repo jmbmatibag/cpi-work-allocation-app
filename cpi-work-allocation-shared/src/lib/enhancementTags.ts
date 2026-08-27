@@ -70,3 +70,108 @@ export function isKnownEnhancementTag(
 export function normalizeEnhancementTag(value: string): string {
   return value.trim().replace(/\s+/g, ' ').toLowerCase();
 }
+
+// ── Resolution ──────────────────────────────────────────────────────────────
+// Lives HERE, not in the API, because there are two export pipelines that both
+// have to agree: the API's flat Finance CSV (/api/finance-export) and the
+// frontend's Excel/PDF export (lib/exports). A second copy of this logic is
+// exactly how the two would drift into reporting different values for the
+// same row.
+
+/**
+ * Build a tolerant matcher for one canonical tag.
+ *
+ * The tolerances absorb the noise this feature exists to eliminate, and the
+ * value RETURNED is always the canonical roster spelling, never the logger's
+ * variant:
+ *
+ *   • separators  → `[\s/-]+`     "axa smart claims" ~ "AXA-SMART CLAIMS"
+ *   • letter→digit→ optional gap  "GISTP 2.5" ~ "GISTP2.5"
+ *   • word edges  → lookaround    "AXA-MTCX" is NOT a hit
+ */
+function buildTagPattern(tag: string): RegExp {
+  const body = tag
+    // Escape regex specials first, so "GISTP2.5" becomes "GISTP2\.5".
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // Any run of space / hyphen / slash in the tag matches any such run in the
+    // text. The roster uses a CLIENT-FEATURE convention, and in free text
+    // people type that separator as a space, a hyphen, or both.
+    .replace(/[\s/-]+/g, '[\\s/-]+')
+    .replace(/([A-Za-z])(\d)/g, '$1[\\s-]*$2');
+  return new RegExp(`(?<![A-Za-z0-9])${body}(?![A-Za-z0-9])`, 'i');
+}
+
+/**
+ * Compiled matchers for one roster, longest-tag-first so a longer tag always
+ * beats a shorter one it contains. Memoised on roster contents: an export
+ * touches thousands of rows but only ever one roster.
+ */
+const matcherCache = new Map<string, ReadonlyArray<readonly [string, RegExp]>>();
+
+export function buildEnhancementMatchers(
+  roster: readonly string[],
+): ReadonlyArray<readonly [string, RegExp]> {
+  const key = JSON.stringify(roster);
+  const hit = matcherCache.get(key);
+  if (hit) return hit;
+
+  const built = [...roster]
+    .filter((t) => t.trim().length > 0)
+    .sort((a, b) => b.length - a.length)
+    .map((tag) => [tag, buildTagPattern(tag)] as const);
+
+  matcherCache.set(key, built);
+  return built;
+}
+
+/**
+ * Historical fallback — recover the enhancement name from free text.
+ *
+ * Rows logged before `enhancementTag` existed carry the name only inside the
+ * description. Returns null when nothing matches: this column gates Finance's
+ * own review, so a guessed tag would pass that review unchecked while a blank
+ * is visibly incomplete.
+ *
+ * `roster` is required, not defaulted. Defaulting it to the constants above is
+ * exactly how the inference-rule bug hid for weeks — the parser looked healthy
+ * while silently ignoring everything the admin had configured.
+ */
+export function extractEnhancementTag(
+  description: string,
+  roster: readonly string[],
+): string | null {
+  const text = (description ?? '').trim();
+  if (!text) return null;
+
+  for (const [tag, re] of buildEnhancementMatchers(roster)) {
+    if (re.test(text)) return tag;
+  }
+  return null;
+}
+
+/** Minimal shape both export pipelines can satisfy. */
+export interface EnhancementResolvable {
+  workType: string;
+  enhancementTag?: string | null;
+  description: string;
+}
+
+/**
+ * Hybrid resolution, most-trusted source first:
+ *
+ *   1. The stored tag — a human picked it from the roster. Authoritative, and
+ *      returned even if an admin has since removed it: the historical record
+ *      of what was logged outranks today's list.
+ *   2. Description parse — ONLY for Specific Enhancement rows, so an unrelated
+ *      task that merely mentions a tag in passing is never mislabelled.
+ *   3. Blank.
+ */
+export function resolveEnhancementTag(
+  row: EnhancementResolvable,
+  roster: readonly string[],
+): string {
+  const stored = row.enhancementTag?.trim();
+  if (stored) return stored;
+  if (!isSpecificEnhancement(row.workType)) return '';
+  return extractEnhancementTag(row.description, roster) ?? '';
+}

@@ -16,6 +16,7 @@ import { getReportingPeriod } from "cpi-work-allocation-shared";
 import { useAllocations, MONTH_NAMES, AllocationStatus } from "@/contexts/AllocationsContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useClientsConfig } from "@/contexts/ClientsConfigContext";
+import { resolveEnhancementTag } from "cpi-work-allocation-shared";
 import { api, ApiError } from "@/lib/apiClient";
 import { ExportModal } from "@/components/ExportModal";
 import {
@@ -64,6 +65,8 @@ type MasterRow =
       workCategory: string;
       subCategory: string | null;
       workType: string;
+      /** Resolved Enhancement — stored tag, else parsed from the description. */
+      enhancement: string;
       client: string;
       description: string;
       percentage: number;
@@ -128,7 +131,7 @@ const BentoMetric = ({
 const CompanyMasterOverview = () => {
   const { records } = useAllocations();
   const { getAllUsers } = useAuth();
-  const { teams: configuredTeams } = useClientsConfig();
+  const { teams: configuredTeams, enhancements } = useClientsConfig();
 
   const [month, setMonth] = useState<string>(DEFAULT_MONTH);
   const [year, setYear] = useState<string>(DEFAULT_YEAR);
@@ -236,6 +239,11 @@ const CompanyMasterOverview = () => {
             workCategory: activity.workCategory,
             subCategory: activity.subCategory ?? null,
             workType: activity.workType,
+            // Same chain the API's Finance CSV uses (shared resolver), so the
+            // Excel/PDF export and /api/finance-export can never report a
+            // different Enhancement for the same row. Historical rows with no
+            // stored tag still recover one from their description.
+            enhancement: resolveEnhancementTag(activity, enhancements),
             client: activity.client,
             description: activity.description,
             percentage: activity.percentage,
@@ -245,7 +253,7 @@ const CompanyMasterOverview = () => {
     }
 
     return rows;
-  }, [allUsers, periodRecords]);
+  }, [allUsers, periodRecords, enhancements]);
 
   /**
    * Period-wide Team rollup, keyed strictly by team name.

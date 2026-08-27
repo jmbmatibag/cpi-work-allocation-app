@@ -1,4 +1,4 @@
-import { isSpecificEnhancement } from 'cpi-work-allocation-shared';
+import { resolveEnhancementTag } from 'cpi-work-allocation-shared';
 
 /**
  * Finance export mapping.
@@ -53,102 +53,15 @@ export function extractWorkReference(description: string): string | null {
 // ── Enhancement tag ─────────────────────────────────────────────────────
 
 /**
- * Build a tolerant matcher for one canonical tag.
- *
- * Derived from the live roster rather than hand-written so the dropdown and
- * the parser can never drift apart. The tolerances absorb exactly the noise
- * this feature exists to eliminate, and the value RETURNED is always the
- * canonical spelling — never the logger's variant:
- *
- *   • separators  → `[\s/-]+`        "axa smart claims"       ✓
- *   • letter→digit→ optional gap     "GISTP 2.5"              ✓
- *   • word edges  → lookaround       "GISTP2.55" / "AXA-MTCX" ✗
+ * Resolution now lives in the shared package so this CSV and the frontend
+ * Excel/PDF export cannot disagree about the same row. Re-exported here
+ * because callers (and tests) already import them from this module.
  */
-function buildTagPattern(tag: string): RegExp {
-  const body = tag
-    // Escape regex specials first, so "GISTP2.5" becomes "GISTP2\.5".
-    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    // Any run of space / hyphen / slash in the tag matches any such run in
-    // the text. The roster uses a CLIENT-FEATURE convention ("AXA-SMART
-    // CLAIMS"), and in free text people type that separator as a space, a
-    // hyphen, or both — it is punctuation, not part of the name. One class
-    // covers all of it, so "OAuth/OIDC" ~ "OAuth - OIDC" falls out too.
-    .replace(/[\s/-]+/g, '[\\s/-]+')
-    // "GISTP2.5" should also match "GISTP 2.5" and "GISTP-2.5".
-    .replace(/([A-Za-z])(\d)/g, '$1[\\s-]*$2');
-  return new RegExp(`(?<![A-Za-z0-9])${body}(?![A-Za-z0-9])`, 'i');
-}
+export { extractEnhancementTag } from 'cpi-work-allocation-shared';
 
-/**
- * Compiled matchers for one roster, ordered longest-tag-first so a longer tag
- * always wins over any shorter one it could contain.
- *
- * The roster is admin-maintainable, so this can no longer be built once at
- * module load. It is memoised on the roster contents instead: a single export
- * touches thousands of rows but only ever one roster, so this compiles the
- * regexes once per request rather than once per row.
- */
-const matcherCache = new Map<string, ReadonlyArray<readonly [string, RegExp]>>();
-
-export function buildEnhancementMatchers(
-  roster: readonly string[],
-): ReadonlyArray<readonly [string, RegExp]> {
-  // JSON key: unambiguous across roster entries containing spaces.
-  const key = JSON.stringify(roster);
-  const hit = matcherCache.get(key);
-  if (hit) return hit;
-
-  const built = [...roster]
-    .filter((t) => t.trim().length > 0)
-    .sort((a, b) => b.length - a.length)
-    .map((tag) => [tag, buildTagPattern(tag)] as const);
-
-  // Unbounded growth is not a concern — the key space is "distinct rosters
-  // seen since boot", which changes only when an Admin edits the list.
-  matcherCache.set(key, built);
-  return built;
-}
-
-/**
- * Historical fallback — recover the enhancement name from free text.
- *
- * Rows logged before `enhancementTag` existed carry the name only inside the
- * description. Returns null when nothing matches: same rule as
- * extractWorkReference — this column gates Finance's own review, so a guessed
- * tag would pass that review unchecked while a blank is visibly incomplete.
- *
- * `roster` is required, not defaulted. Defaulting it to the shared constants
- * is exactly how the inference-rule bug hid for weeks: the parser looked
- * healthy while silently ignoring everything the admin had configured.
- */
-export function extractEnhancementTag(
-  description: string,
-  roster: readonly string[],
-): string | null {
-  const text = (description ?? '').trim();
-  if (!text) return null;
-
-  for (const [tag, re] of buildEnhancementMatchers(roster)) {
-    if (re.test(text)) return tag;
-  }
-  return null;
-}
-
-/**
- * Hybrid resolution, most-trusted source first:
- *
- *   1. The stored tag — a human picked it from the roster. Authoritative, and
- *      returned even if an admin has since removed it from the roster: the
- *      historical record of what was logged outranks today's list.
- *   2. Description parse — ONLY for Specific Enhancement rows, so an unrelated
- *      task that merely mentions "Smart Claims" in passing is never mislabelled.
- *   3. Blank.
- */
+/** Thin adapter: ActivitySource already satisfies EnhancementResolvable. */
 export function resolveEnhancement(act: ActivitySource, roster: readonly string[]): string {
-  const stored = act.enhancementTag?.trim();
-  if (stored) return stored;
-  if (!isSpecificEnhancement(act.workType)) return '';
-  return extractEnhancementTag(act.description, roster) ?? '';
+  return resolveEnhancementTag(act, roster);
 }
 
 export interface FinanceExportRow {
