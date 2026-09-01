@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { LogOut, KeyRound, HelpCircle } from "lucide-react";
+import { LogOut, KeyRound, HelpCircle, Rocket } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAllocations } from "@/contexts/AllocationsContext";
@@ -148,6 +148,18 @@ const AppSidebar = () => {
         >
           <HelpCircle className="h-4 w-4" />
           {!collapsed && <span className="ml-2">Help &amp; Guides</span>}
+        </Button>
+        {/* Release history. Sits beside Help for the same reason: it is
+            reference material every signed-in user can read, not a
+            role-gated feature. */}
+        <Button
+          variant="ghost"
+          size={collapsed ? "icon" : "sm"}
+          className="w-full justify-start text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+          onClick={() => guard(() => navigate("/whats-new"))}
+        >
+          <Rocket className="h-4 w-4" />
+          {!collapsed && <span className="ml-2">Patch Updates</span>}
         </Button>
         {isApiMode && (
           <Button

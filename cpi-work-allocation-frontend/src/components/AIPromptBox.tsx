@@ -177,7 +177,6 @@ const AIPromptBox = ({
         handleSubmit();
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [autocomplete, handleSubmit],
   );
 

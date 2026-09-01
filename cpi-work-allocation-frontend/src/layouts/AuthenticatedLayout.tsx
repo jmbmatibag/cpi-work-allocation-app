@@ -3,6 +3,7 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import AppSidebar from "@/components/AppSidebar";
 import NotificationBell from "@/components/NotificationBell";
 import MaintenanceBanner from "@/components/MaintenanceBanner";
+import PatchNotesModal from "@/components/PatchNotesModal";
 import DateTimeClock from "@/components/DateTimeClock";
 import { ModeToggle } from "@/components/ui/mode-toggle";
 import { useNotificationScheduler } from "@/hooks/useNotificationScheduler";
@@ -39,6 +40,9 @@ const AuthenticatedLayout = () => {
             <main className="flex-1 overflow-hidden min-h-0">
               <Outlet />
             </main>
+            {/* One-time "what's new" pop-up. Mounted at the shell so it can
+                surface over whichever page the user landed on. */}
+            <PatchNotesModal />
           </div>
         </div>
       </SidebarProvider>

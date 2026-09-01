@@ -21,6 +21,7 @@ import Login from "@/pages/Login";
 import SetupPassword from "@/pages/SetupPassword";
 import ResetPassword from "@/pages/ResetPassword";
 import HelpGuides from "@/pages/HelpGuides";
+import PatchNotesPage from "@/pages/PatchNotesPage";
 import Maintenance from "@/pages/Maintenance";
 import NotFound from "@/pages/NotFound";
 
@@ -141,6 +142,18 @@ const App = () => (
                   element={
                     <ProtectedRoute>
                       <HelpGuides />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Patch updates — auth-only, no role gate, same as /help.
+                    Everyone who uses the app should be able to read what
+                    changed in it. */}
+                <Route
+                  path="/whats-new"
+                  element={
+                    <ProtectedRoute>
+                      <PatchNotesPage />
                     </ProtectedRoute>
                   }
                 />
