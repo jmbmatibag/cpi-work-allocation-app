@@ -4,7 +4,11 @@ import {
   type SmartLineInput,
 } from "./timelineParser";
 import { categoryTagBody } from "./tagHighlight";
-import { isLeaveOrHolidayLog, leaveWorkTypeKey } from "./leaveClassification";
+import {
+  isLeaveOrHolidayLog,
+  leaveWorkTypeKey,
+  isNonWorkingLogText,
+} from "./leaveClassification";
 
 /**
  * Journal aggregation — consolidates a month of journal entries into
@@ -521,6 +525,12 @@ export function aggregateJournalEntries(
         category: SPECIFIC_ENHANCEMENT_SUBCATEGORY,
       };
     }
+    // UNREACHABLE as of the non-working-time exclusion: `isNonWorkingUnit`
+    // drops every leave/holiday unit before resolveBucket is reached. Kept
+    // deliberately — it documents how leave USED to bucket and is the branch
+    // to restore if leave ever becomes costed work again. Do not "fix" it by
+    // re-routing leave here; the exclusion gate is the intended behaviour.
+    //
     // Untagged leaves have no category, so they'd all share one bucket. Split
     // by detected leave type so distinct types don't consolidate. An untagged
     // leave (e.g. "on leave") with no specific type still shares one bucket.
@@ -532,6 +542,18 @@ export function aggregateJournalEntries(
     const category = unit.categoryTag;
     return { key: `${client}::${category ?? "__untagged__"}`, category };
   };
+
+  /**
+   * Non-working-time gate. Leave / holiday units are dropped from the
+   * aggregation entirely: their minutes must not enter `totalMinutes`
+   * (which weights every percentage) and their bullets must not reach
+   * `formatAggregationAsPrompt` (which builds the review summary).
+   *
+   * The raw JournalEntry rows are untouched — the log stays in the DB,
+   * it just stops participating in allocation math.
+   */
+  const isNonWorkingUnit = (unit: LineUnit): boolean =>
+    isNonWorkingLogText(unit.bullets.join(" "));
 
   const sorted = [...entries].sort((a, b) => a.date.localeCompare(b.date));
 
@@ -557,6 +579,7 @@ export function aggregateJournalEntries(
 
         const unit = descriptionToUnit(description, cat);
         if (unit.bullets.length === 0) continue;
+        if (isNonWorkingUnit(unit)) continue; // leave/holiday: excluded from math
 
         const clients = resolveClients(unit);
         const isExplicit = unit.clientTags.length > 0;
@@ -594,6 +617,7 @@ export function aggregateJournalEntries(
       const units = parseEntryIntoUnits(entry.content, cat);
 
       for (const unit of units) {
+        if (isNonWorkingUnit(unit)) continue; // leave/holiday: excluded from math
         const clients = resolveClients(unit);
         const isExplicit = unit.clientTags.length > 0;
         // Divide the 8h fallback equally when the line mentions multiple clients.

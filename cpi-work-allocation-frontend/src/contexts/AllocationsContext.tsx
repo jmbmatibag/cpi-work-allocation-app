@@ -4,6 +4,7 @@ import type { WorkStreamData } from "@/components/Workspace";
 import { getDataClient } from "@/lib/dataClient";
 import { api } from "@/lib/apiClient";
 import { useAuth } from "@/contexts/AuthContext";
+import { isNonWorkingActivity } from "@/lib/leaveClassification";
 
 export type AllocationStatus =
   | "Draft"
@@ -582,7 +583,12 @@ const LocalAllocationsProvider = ({ children }: { children: ReactNode }) => {
   // (no Date objects, no circular refs; flags map preserves keys).
   const [records, setRecords] = useState<AllocationRecord[]>(() => {
     const stored = getDataClient().read<AllocationRecord[]>("allocations");
-    return stored ?? seedRecords;
+    // Same non-working-time strip the API path applies in fromApiRecord —
+    // mock/localStorage mode must not be the one place leave stays visible.
+    return (stored ?? seedRecords).map((r) => ({
+      ...r,
+      streams: stripNonWorkingStreams(r.streams),
+    }));
   });
 
   // Persist on every records change. All six mutation methods on this
@@ -612,11 +618,11 @@ const LocalAllocationsProvider = ({ children }: { children: ReactNode }) => {
         );
         if (idx >= 0) {
           const existing = prev[idx];
-          if (
-            existing.status === "Pending Review" ||
-            existing.status === "Approved"
-          )
-            return prev;
+          // Only an Approved record is frozen. "Pending Review" content stays
+          // editable (mirrors the API-mode guard in the allocations
+          // controller) so an employee can still fix a card while the manager
+          // has not acted on it yet.
+          if (existing.status === "Approved") return prev;
 
           // Idempotence guard: if the caller's payload describes the
           // same streams and status we already have, return prev
@@ -968,6 +974,40 @@ const TO_WIRE_STATUS: Record<AllocationStatus, WireStatus> = {
   "Needs Revision":  "NeedsRevision",
 };
 
+/**
+ * Strip non-working time (leave / holiday) out of a record's streams.
+ *
+ * Applied at the ONE wire→domain boundary rather than at each render site, so
+ * every consumer inherits the rule: the employee's own Monthly Allocations
+ * editor, TeamHub manager review, the Employee Dashboard, Master Overview,
+ * Team Analytics, Performance Review, and the Peer Coverage tabs.
+ *
+ * Why here and not per page: leave must not be visible to ANYONE. A per-page
+ * filter is a list that goes stale the moment someone adds a seventh surface.
+ *
+ * NEW records never contain leave at all — Workspace drops it before a card is
+ * ever created. This filter exists for HISTORICAL records written before that
+ * gate landed. Streams left with no activities are removed so an
+ * all-leave stream doesn't render as an empty category header.
+ */
+export function stripNonWorkingStreams(
+  streams: readonly WorkStreamData[],
+): WorkStreamData[] {
+  return streams
+    .map((stream) => ({
+      ...stream,
+      activities: stream.activities.filter(
+        (activity) =>
+          !isNonWorkingActivity({
+            workCategory: activity.workCategory ?? stream.category,
+            subCategory: activity.subCategory ?? null,
+            workType: activity.workType,
+          }),
+      ),
+    }))
+    .filter((stream) => stream.activities.length > 0);
+}
+
 // Exported so the Peer Coverage hooks can reuse the exact same wire→domain
 // mapping when they fetch a peer manager's submissions directly.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -983,7 +1023,7 @@ export function fromApiRecord(r: any): AllocationRecord {
     month:         r.month,
     year:          r.year,
     monthIndex:    r.monthIndex,
-    streams:       r.streams as WorkStreamData[],
+    streams:       stripNonWorkingStreams(r.streams as WorkStreamData[]),
     status:        STATUS_MAP[r.status] ?? "Draft",
     ...(r.submittedAt && { submittedAt: r.submittedAt }),
     ...(r.reviewedAt  && { reviewedAt:  r.reviewedAt }),

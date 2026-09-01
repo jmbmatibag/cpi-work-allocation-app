@@ -20,6 +20,10 @@ import {
 // extraction + stripping so the whole tag is recognised as one token.
 // ---------------------------------------------------------------------
 
+/** Sum of 2dp percentages, rounded back to 2dp (raw float sums are unsafe). */
+const sumPct = (items: readonly { pct: number }[]): number =>
+  Math.round(items.reduce((a, i) => a + i.pct, 0) * 100) / 100;
+
 const KNOWN_CATEGORIES = [
   "TRAINING & DEVELOPMENT",
   "Sales, Marketing & BD",
@@ -90,105 +94,89 @@ describe("aggregateJournalEntries — multi-word #category tags", () => {
   });
 });
 
-describe("aggregateJournalEntries — leaves bucket by Work Type", () => {
-  it("keeps distinct leave types in separate cards", () => {
+describe("aggregateJournalEntries — non-working time is excluded", () => {
+  it("drops leave/holiday units entirely (time-blocked entries)", () => {
     const entries: JournalEntry[] = [
       { date: "2026-07-01", content: "8:00 am to 5:00 pm Sick leave" },
       { date: "2026-07-02", content: "8:00 am to 5:00 pm Vacation leave" },
     ];
 
-    const items = aggregateJournalEntries(entries, { knownClients: [] });
-
-    // Sick and Vacation must NOT consolidate into one card.
-    expect(items).toHaveLength(2);
-    const texts = items.map((i) => i.bullets.join(" ").toLowerCase());
-    expect(texts.some((t) => t.includes("sick"))).toBe(true);
-    expect(texts.some((t) => t.includes("vacation"))).toBe(true);
+    // Every unit is non-working, so nothing is left to allocate.
+    expect(aggregateJournalEntries(entries, { knownClients: [] })).toEqual([]);
   });
 
-  it("merges case variants of the same leave type into one card", () => {
+  it("drops leave/holiday units entirely (legacy content entries)", () => {
     const entries: JournalEntry[] = [
-      { date: "2026-07-01", content: "8:00 am to 5:00 pm sick leave" },
-      { date: "2026-07-02", content: "8:00 am to 5:00 pm Sick Leave" },
-      { date: "2026-07-03", content: "8:00 am to 5:00 pm SICK LEAVE" },
+      { date: "2026-07-01", content: "- on leave" },
+      { date: "2026-07-02", content: "- regular holiday" },
     ];
 
-    const items = aggregateJournalEntries(entries, { knownClients: [] });
-
-    // All three cased forms are the SAME leave type → one card, three days.
-    expect(items).toHaveLength(1);
-    expect(items[0].days).toHaveLength(3);
+    expect(aggregateJournalEntries(entries, { knownClients: [] })).toEqual([]);
   });
 
-  it("does not lump a generic 'on leave' in with a specific type", () => {
+  it("excludes leave minutes from the percentage weighting", () => {
+    // Two identical 8h working days plus one 8h leave day. If the leave day
+    // leaked into the weights the two work buckets would be 33.33% each;
+    // excluded, they split the whole 100%.
     const entries: JournalEntry[] = [
-      { date: "2026-07-01", content: "8:00 am to 5:00 pm on leave" },
-      { date: "2026-07-02", content: "8:00 am to 5:00 pm sick leave" },
+      { date: "2026-07-01", content: "8:00 am to 5:00 pm @ACME build the API" },
+      { date: "2026-07-02", content: "8:00 am to 5:00 pm @GLOBEX write the docs" },
+      { date: "2026-07-03", content: "8:00 am to 5:00 pm Sick leave" },
     ];
 
-    const items = aggregateJournalEntries(entries, { knownClients: [] });
-    expect(items).toHaveLength(2);
-  });
-});
+    const items = aggregateJournalEntries(entries, {
+      knownClients: ["ACME", "GLOBEX"],
+    });
 
-describe("formatAggregationAsPrompt — clean bullets for multi-word tags", () => {
-  it("emits the full tag in the header and a clean bullet (no '& DEVELOPMENT' leak)", () => {
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.client).sort()).toEqual(["ACME", "GLOBEX"]);
+    expect(sumPct(items)).toBe(100);
+    expect(items.every((i) => i.pct === 50)).toBe(true);
+  });
+
+  it("keeps real work on a day that also contains leave", () => {
     const entries: JournalEntry[] = [
       {
         date: "2026-07-01",
         content:
-          "1:00 pm to 2:00 pm #TRAINING & DEVELOPMENT Work Allocation App Pilot Testing Kick-off Meeting",
-      },
-      {
-        date: "2026-07-04",
-        content:
-          "3:00 pm to 4:30 pm #TRAINING & DEVELOPMENT 2nd COC: Cybersecurity and Information Security Refresher",
+          "8:00 am to 12:00 pm @ACME ship the release" +
+          "\n" +
+          "1:00 pm to 5:00 pm half-day sick leave",
       },
     ];
 
-    const items = aggregateJournalEntries(entries, {
-      knownClients: [],
-      knownCategories: KNOWN_CATEGORIES,
-    });
-    const prompt = formatAggregationAsPrompt(items, {
-      knownCategories: KNOWN_CATEGORIES,
-    });
+    const items = aggregateJournalEntries(entries, { knownClients: ["ACME"] });
 
-    // The header carries the whole, un-truncated tag — ampersand intact.
-    expect(prompt).toContain("#TRAINING & DEVELOPMENT");
-    // The fractured form must be gone: no bullet begins with "& DEVELOPMENT".
-    expect(prompt).not.toMatch(/--\s*& DEVELOPMENT/);
-    // Bullets start at the real task text.
-    expect(prompt).toContain("Work Allocation App Pilot Testing Kick-off Meeting");
-    expect(prompt).toContain(
-      "2nd COC: Cybersecurity and Information Security Refresher",
-    );
-    // No stray "#TRAINING" fragment remains inside a bullet body.
-    expect(prompt).not.toMatch(/--\s*#?TRAINING(?!\s*&)/);
+    expect(items).toHaveLength(1);
+    expect(items[0].client).toBe("ACME");
+    expect(items[0].bullets.join(" ").toLowerCase()).not.toContain("sick");
+    expect(items[0].pct).toBe(100);
   });
 
-  it("single-bullet bucket: tag preserved, body stripped clean", () => {
+  it("does not misclassify work that merely mentions a leave-like word", () => {
+    // "Holiday Promo" is a project name, not time off — but the shared keyword
+    // net is intentionally broad, so this documents the known trade-off.
     const entries: JournalEntry[] = [
-      {
-        date: "2026-07-04",
-        content:
-          "3:00 pm to 4:30 pm #TRAINING & DEVELOPMENT 2nd COC: Cybersecurity Refresher",
-      },
+      { date: "2026-07-01", content: "8:00 am to 5:00 pm @ACME sprint planning" },
     ];
 
-    const items = aggregateJournalEntries(entries, {
-      knownClients: [],
-      knownCategories: KNOWN_CATEGORIES,
-    });
-    const prompt = formatAggregationAsPrompt(items, {
-      knownCategories: KNOWN_CATEGORIES,
-    });
+    const items = aggregateJournalEntries(entries, { knownClients: ["ACME"] });
+    expect(items).toHaveLength(1);
+  });
+});
 
-    // Whole line: leading "#TRAINING & DEVELOPMENT" tag intact, body clean.
-    expect(prompt).toBe(
-      "- #TRAINING & DEVELOPMENT 2nd COC: Cybersecurity Refresher - 100.00%",
-    );
-    // The truncated form ("#TRAINING" alone, then "2nd COC" as body) is gone.
-    expect(prompt).not.toMatch(/#TRAINING\s+2nd/);
+describe("formatAggregationAsPrompt — non-working time never reaches the summary", () => {
+  it("omits leave bullets from the generated prompt text", () => {
+    const entries: JournalEntry[] = [
+      { date: "2026-07-01", content: "8:00 am to 5:00 pm @ACME build the API" },
+      { date: "2026-07-02", content: "8:00 am to 5:00 pm Vacation leave" },
+    ];
+
+    const items = aggregateJournalEntries(entries, { knownClients: ["ACME"] });
+    const prompt = formatAggregationAsPrompt(items).toLowerCase();
+
+    expect(prompt).toContain("build the api");
+    expect(prompt).not.toContain("vacation");
+    expect(prompt).not.toContain("leave");
   });
 });

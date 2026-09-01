@@ -22,7 +22,7 @@ import {
 import { useAIConfig } from "@/contexts/AIConfigContext";
 import type { ActivityFlag } from "@/contexts/AllocationsContext";
 import { buildHighlightRegex, renderTagged } from "@/lib/tagHighlight";
-import { isLeaveOrHolidayLog, inferOthersWorkType } from "@/lib/leaveClassification";
+import { isNonWorkingLogText } from "@/lib/leaveClassification";
 import {
   isSpecificEnhancement,
   isKnownEnhancementTag,
@@ -141,56 +141,17 @@ function deriveCardHeader(
   };
 }
 
-// ── Leave / Holiday intercept ───────────────────────────────────────────────
-// A time-off log ("on Leave", "Sick leave for today", "holiday") is not a real
-// work category — CPI files it under General Work → OTHERS. When we detect the
-// intent we (Epic 1) force the card into General Work / OTHERS, then (Epic 2)
-// infer the specific Work Type from the description against the OTHERS scope's
-// real options. Both steps resolve names against the LIVE taxonomy (which is
-// ahead of the local seed and may differ in casing) so we never emit a value
-// the dropdowns can't match — that mismatch (e.g. "Others" vs "OTHERS") is
-// exactly what previously rendered both the Sub Category and Work Type
-// dropdowns blank. The override is applied after parsing, so it behaves
-// identically for the rule parser, the AI parser, and the dynamic hour parser.
+// ── Leave / Holiday exclusion ───────────────────────────────────────────────
+// A time-off log ("on Leave", "Sick leave for today", "holiday") is not active
+// work. It stays recorded in the Daily Journal (the JournalEntry row is saved
+// verbatim), but it never becomes a costed AllocationActivity: leave is dropped
+// from the parsed task list before applyParsedTasks, so its share never enters
+// the scale-to-100 divisor or any downstream percentage.
 //
-// The keyword map + classifiers live in @/lib/leaveClassification so the
-// journal aggregator buckets leaves the SAME way this stage later classifies
-// them (distinct leave types stay in separate cards; case variants merge).
-
-/**
- * Epic 1 — reroute a time-off task into General Work → OTHERS. The OTHERS sub
- * category name is resolved from the live General Work sub categories
- * (case-insensitive), falling back to the literal "OTHERS" when the scope
- * isn't configured (e.g. local seed without the bucket). subCategory is
- * stamped BEFORE work-type inference because the inference is scoped to it.
- *
- * @param task              the parsed task to (possibly) reroute
- * @param generalWorkSubs   live sub categories under "General Work"
- * @param scopeWorkTypesFor resolver: sub category name → its Work Type names
- */
-function applyLeaveOverride(
-  task: ParsedTask,
-  generalWorkSubs: readonly { name: string }[],
-  scopeWorkTypesFor: (sub: string) => readonly string[],
-): ParsedTask {
-  if (!isLeaveOrHolidayLog(task.description)) return task;
-
-  const subCategory =
-    generalWorkSubs.find((s) => s.name.trim().toLowerCase() === "others")
-      ?.name ?? "OTHERS";
-
-  const workType = inferOthersWorkType(
-    task.description,
-    scopeWorkTypesFor(subCategory),
-  );
-
-  return {
-    ...task,
-    workCategory: "General Work",
-    subCategory,
-    workType: workType ?? "", // null → blank → user picks manually
-  };
-}
+// This SUPERSEDES the former "reroute time-off into General Work → OTHERS"
+// intercept. There is exactly one rule now — exclude — so the prompt path and
+// the journal aggregator (journalAggregation.isNonWorkingUnit) agree. The
+// keyword net lives in @/lib/leaveClassification, shared by both.
 
 export interface ActivityData {
   id: string;
@@ -233,6 +194,13 @@ interface WorkspaceProps {
   employeeTeam?: string;
   submitLabel?: string;
   disabled?: boolean;
+  /**
+   * Disables ONLY the submit button, leaving the cards editable. Used for a
+   * record that is already "Pending Review": the backend rejects a second
+   * submit (409), but the employee may still correct cards — those edits
+   * autosave, so the button would otherwise be a dead end.
+   */
+  submitDisabled?: boolean;
   onAutoGenerate?: () => void;
   showAutoGenerate?: boolean;
   promptText?: string;
@@ -273,9 +241,12 @@ interface DescriptionFieldProps {
    * mid-typing. Optional; when omitted the value is left as typed.
    */
   onCommit?: (val: string) => void;
+  /** Read-only records (Approved) lock the textarea instead of silently
+   *  discarding keystrokes further up the tree. */
+  disabled?: boolean;
 }
 
-const DescriptionField = ({ value, onChange, onCommit }: DescriptionFieldProps) => {
+const DescriptionField = ({ value, onChange, onCommit, disabled = false }: DescriptionFieldProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const backdropRef = useRef<HTMLDivElement>(null);
   const { categories: mainCategories, subCategories } = useClientsConfig();
@@ -317,6 +288,7 @@ const DescriptionField = ({ value, onChange, onCommit }: DescriptionFieldProps) 
         onChange={(e) => onChange(e.target.value)}
         onBlur={(e) => onCommit?.(e.target.value)}
         onScroll={syncScroll}
+        disabled={disabled}
         className="relative min-h-[60px] resize-y text-sm border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
         style={{ color: "transparent", caretColor: "hsl(var(--foreground))" }}
       />
@@ -333,6 +305,7 @@ const Workspace = ({
   employeeTeam,
   submitLabel = "Submit Monthly Allocation",
   disabled = false,
+  submitDisabled = false,
   onAutoGenerate,
   showAutoGenerate = false,
   promptText,
@@ -493,15 +466,22 @@ const Workspace = ({
         return;
       }
 
-      // Leave/Holiday intercept: reroute any time-off task to General Work →
-      // OTHERS and infer its Work Type from the description, resolving both
-      // against the live taxonomy so the dropdowns render a matching value.
-      const generalWorkSubs = subCategoriesForMain("General Work");
-      const tasks = result.tasks.map((t) =>
-        applyLeaveOverride(t, generalWorkSubs, (sub) =>
-          workTypesForParent(sub).map((w) => w.name),
-        ),
+      // Non-working time is dropped BEFORE applyParsedTasks so it never enters
+      // the scale-to-100 divisor. Dropping (rather than zeroing) is required:
+      // a 0% card would still occupy a row and skew the largest-remainder
+      // redistribution across the surviving cards.
+      const tasks = result.tasks.filter(
+        (t) => !isNonWorkingLogText(t.description),
       );
+
+      if (tasks.length === 0) {
+        toast.info("Only leave / holiday entries were found.", {
+          description:
+            "Non-working time is logged but excluded from allocation percentages.",
+        });
+        return;
+      }
+
       // Percentage scaling (Epic 1): only Auto-Generate output is normalized
       // to 100%. Manually typed prompts keep their exact percentages.
       applyParsedTasks(tasks, autoGenerated);
@@ -649,6 +629,34 @@ const Workspace = ({
               ...s,
               activities: s.activities.map((a, ai) =>
                 ai === aIdx ? { ...a, [field]: value } : a,
+              ),
+            }
+          : s,
+      ),
+    );
+  };
+
+  /**
+   * Multi-field variant of `updateActivity`. Required whenever one user
+   * action changes more than one field: `updateActivity` derives its next
+   * state from the `streams` prop, so two calls in the same handler both
+   * read the SAME pre-change snapshot and the second one silently reverts
+   * the first. That is what made Work Type look unselectable — picking a
+   * non-"Specific Enhancement" type wrote the type, then the follow-up
+   * `enhancementTag: null` write reset it back. One patch, one write.
+   */
+  const updateActivityFields = (
+    sIdx: number,
+    aIdx: number,
+    patch: Partial<ActivityData>,
+  ) => {
+    onStreamsChange(
+      streams.map((s, si) =>
+        si === sIdx
+          ? {
+              ...s,
+              activities: s.activities.map((a, ai) =>
+                ai === aIdx ? { ...a, ...patch } : a,
               ),
             }
           : s,
@@ -1126,6 +1134,7 @@ const Workspace = ({
                                               );
                                               onStreamsChange(next);
                                             }}
+                                            disabled={disabled}
                                           >
                                             <SelectTrigger>
                                               <SelectValue placeholder="Select category..." />
@@ -1184,6 +1193,7 @@ const Workspace = ({
                                                 );
                                                 onStreamsChange(next);
                                               }}
+                                              disabled={disabled}
                                             >
                                               <SelectTrigger>
                                                 <SelectValue placeholder="Select sub category..." />
@@ -1209,28 +1219,23 @@ const Workspace = ({
                                           <Select
                                             value={activity.workType}
                                             onValueChange={(v) => {
-                                              updateActivity(
-                                                sIdx,
-                                                aIdx,
-                                                "workType",
-                                                v,
-                                              );
                                               // Leaving Specific Enhancement
                                               // clears the tag. Hiding the
                                               // field is not enough — the
                                               // value would survive on the
                                               // object and reach Finance.
-                                              if (!isSpecificEnhancement(v)) {
-                                                updateActivity(
-                                                  sIdx,
-                                                  aIdx,
-                                                  "enhancementTag",
-                                                  null,
-                                                );
-                                              }
+                                              // Both fields go in ONE write;
+                                              // see `updateActivityFields`.
+                                              updateActivityFields(sIdx, aIdx, {
+                                                workType: v,
+                                                ...(isSpecificEnhancement(v)
+                                                  ? {}
+                                                  : { enhancementTag: null }),
+                                              });
                                             }}
                                             disabled={
-                                              hasSubs && !activity.subCategory
+                                              disabled ||
+                                              (hasSubs && !activity.subCategory)
                                             }
                                           >
                                             <SelectTrigger>
@@ -1283,6 +1288,7 @@ const Workspace = ({
                                                   v,
                                                 )
                                               }
+                                              disabled={disabled}
                                             >
                                               <SelectTrigger>
                                                 <SelectValue placeholder="Select enhancement..." />
@@ -1334,6 +1340,7 @@ const Workspace = ({
                                       onValueChange={(v) =>
                                         updateActivity(sIdx, aIdx, "client", v)
                                       }
+                                      disabled={disabled}
                                     >
                                       <SelectTrigger>
                                         <SelectValue placeholder="Select client..." />
@@ -1371,6 +1378,7 @@ const Workspace = ({
                                         )
                                       }
                                       placeholder="0.00"
+                                      disabled={disabled}
                                     />
                                   </div>
 
@@ -1379,6 +1387,7 @@ const Workspace = ({
                                       Description
                                     </label>
                                     <DescriptionField
+                                      disabled={disabled}
                                       value={activity.description}
                                       onChange={(val) => updateActivity(sIdx, aIdx, "description", val)}
                                       onCommit={(val) =>
@@ -1448,7 +1457,12 @@ const Workspace = ({
             )}
             <Button
               onClick={handleValidatedSubmit}
-              disabled={parseFloat(grandTotal.toFixed(2)) !== 100 || disabled || hasIncompleteActivities}
+              disabled={
+                parseFloat(grandTotal.toFixed(2)) !== 100 ||
+                disabled ||
+                submitDisabled ||
+                hasIncompleteActivities
+              }
               className="px-8"
             >
               {submitLabel}

@@ -74,6 +74,16 @@ const CONCURRENT_ACTION_MESSAGE =
  */
 class ConcurrentActionError extends Error {}
 
+/**
+ * Statuses whose content a draft autosave may still overwrite. Only an
+ * APPROVED allocation is frozen — an employee must stay able to correct a
+ * card while it is still sitting in the manager's queue (PendingReview).
+ * Note this path never writes `status`, so a PendingReview record keeps its
+ * place in the workflow across an edit.
+ */
+const EDITABLE_STATUSES = ['Draft', 'NeedsRevision', 'PendingReview'] as const;
+type EditableStatus = (typeof EDITABLE_STATUSES)[number];
+
 export async function upsertDraft(req: AuthRequest, res: Response): Promise<void> {
   const d = getValid(req, UpsertDraftSchema);
 
@@ -99,12 +109,11 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
     where: { employeeId_month_year: { employeeId: d.employeeId, month: d.month, year: d.year } },
   });
 
-  // Only Draft / NeedsRevision records are editable by a draft autosave. A
-  // submitted (PendingReview) or Approved record must never be overwritten by
-  // a late background save. This is the fast-path check; the authoritative,
-  // race-proof guard lives inside the transaction below.
-  if (existing && !['Draft', 'NeedsRevision'].includes(existing.status)) {
-    res.status(409).json({ error: 'Cannot overwrite a submitted or approved allocation' });
+  // An Approved record must never be overwritten by a late background save.
+  // This is the fast-path check; the authoritative, race-proof guard lives
+  // inside the transaction below.
+  if (existing && !EDITABLE_STATUSES.includes(existing.status as EditableStatus)) {
+    res.status(409).json({ error: 'Cannot overwrite an approved allocation' });
     return;
   }
 
@@ -139,7 +148,7 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
       // applies the scalar field updates, so the activity replacement below
       // only needs to touch the activity rows.
       const guarded = await tx.allocationRecord.updateMany({
-        where: { id: existing.id, status: { in: ['Draft', 'NeedsRevision'] } },
+        where: { id: existing.id, status: { in: [...EDITABLE_STATUSES] } },
         data: { team: d.team, managerId, monthIndex: d.monthIndex },
       });
       if (guarded.count === 0) throw new ConcurrentActionError();
@@ -184,9 +193,9 @@ export async function upsertDraft(req: AuthRequest, res: Response): Promise<void
     });
   } catch (err) {
     if (err instanceof ConcurrentActionError) {
-      // A concurrent submit/approve won the race — the record is no longer
-      // an editable draft. Surface a clean 409 rather than clobbering it.
-      res.status(409).json({ error: 'Cannot overwrite a submitted or approved allocation' });
+      // A concurrent approve won the race — the record is no longer editable.
+      // Surface a clean 409 rather than clobbering it.
+      res.status(409).json({ error: 'Cannot overwrite an approved allocation' });
       return;
     }
     throw err;

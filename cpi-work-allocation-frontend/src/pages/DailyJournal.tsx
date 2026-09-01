@@ -73,6 +73,7 @@ import {
   validateJournalLineTime,
 } from "@/lib/timelineParser";
 import type { SmartLineInput, LineValidation } from "@/lib/timelineParser";
+import { isNonWorkingLogText } from "@/lib/leaveClassification";
 
 // ── Editor consolidation ─────────────────────────────────────────────────────
 //
@@ -778,9 +779,15 @@ const DailyJournal = () => {
     [lines],
   );
 
+  // Non-working time (leave / holiday) is still SAVED to the journal entry —
+  // it is excluded here only so the "total logged" figure reflects actual
+  // working hours. Filter before the reduce, not after: a leave line's minutes
+  // must never enter the sum.
   const totalMinutes = useMemo(
     () =>
-      resolvedLines.reduce((sum, l) => sum + (l.durationMinutes ?? 0), 0),
+      resolvedLines
+        .filter((l) => !isNonWorkingLogText(l.text))
+        .reduce((sum, l) => sum + (l.durationMinutes ?? 0), 0),
     [resolvedLines],
   );
 

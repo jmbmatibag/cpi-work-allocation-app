@@ -34,6 +34,7 @@ import { exportToCsv } from "@/lib/exports/csv";
 import { exportToXlsx } from "@/lib/exports/xlsx";
 import { exportToPdf } from "@/lib/exports/pdf";
 import type { ExportOptions } from "@/lib/exports/types";
+import { isNonWorkingActivity } from "@/lib/leaveClassification";
 
 /**
  * Company Master Overview — Finance / org-wide read-only view.
@@ -206,10 +207,29 @@ const CompanyMasterOverview = () => {
         continue;
       }
 
+      // Non-working time (leave / holiday) is excluded from this grid and
+      // from the Excel/PDF export it feeds, using the SAME shared predicate
+      // as the API's Finance CSV so the two can never disagree about one
+      // employee-month. The underlying record is untouched — this filters
+      // the SHEET, not the data.
+      const isWorking = (
+        streamCategory: string,
+        activity: { subCategory?: string | null; workType: string },
+      ) =>
+        !isNonWorkingActivity({
+          workCategory: streamCategory,
+          subCategory: activity.subCategory ?? null,
+          workType: activity.workType,
+        });
+
       // Records with zero activities (edge case — empty Draft) still
-      // render as a single row to show their status.
+      // render as a single row to show their status. Counting only WORKING
+      // activities matters here: an employee whose whole month was leave
+      // would otherwise pass this gate, emit no rows below, and vanish from
+      // an org-wide compliance grid. They fall through to the "empty" row
+      // instead, staying visible with their status intact.
       const totalActivities = record.streams.reduce(
-        (sum, s) => sum + s.activities.length,
+        (sum, s) => sum + s.activities.filter((a) => isWorking(s.category, a)).length,
         0,
       );
       if (totalActivities === 0) {
@@ -227,6 +247,8 @@ const CompanyMasterOverview = () => {
 
       for (const stream of record.streams) {
         for (const activity of stream.activities) {
+          if (!isWorking(stream.category, activity)) continue;
+
           rows.push({
             kind: "activity",
             key: `${record.id}:${activity.id}`,

@@ -9,6 +9,7 @@ import {
 } from "recharts";
 import { ChevronRight, Home } from "lucide-react";
 import type { AllocationRecord } from "@/contexts/AllocationsContext";
+import { isNonWorkingActivity } from "@/lib/leaveClassification";
 
 // ─── Palette ─────────────────────────────────────────────────────────────────
 
@@ -54,10 +55,26 @@ function flattenRecords(records: AllocationRecord[]): FlatActivity[] {
   for (const rec of records) {
     for (const stream of rec.streams) {
       for (const act of stream.activities) {
+        const subCategory =
+          (act as { subCategory?: string | null }).subCategory ?? null;
+
+        // Non-working time is excluded from every drill level. Filtering at
+        // the flatten step means category/sub/workType/person rollups all
+        // inherit the rule without four separate guards.
+        if (
+          isNonWorkingActivity({
+            workCategory: stream.category,
+            subCategory,
+            workType: act.workType,
+          })
+        ) {
+          continue;
+        }
+
         out.push({
           employeeName: rec.employeeName,
           workCategory: stream.category,
-          subCategory: (act as { subCategory?: string | null }).subCategory ?? null,
+          subCategory,
           workType: act.workType,
           percentage: act.percentage,
         });

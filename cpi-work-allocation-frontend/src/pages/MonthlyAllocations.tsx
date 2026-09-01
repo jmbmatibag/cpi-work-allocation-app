@@ -86,7 +86,11 @@ const MonthlyAllocations = () => {
   }, [currentUser, month, year, getRecord]);
 
   const status: AllocationStatus = existingRecord?.status ?? "Draft";
-  const isReadOnly = status === "Pending Review" || status === "Approved";
+  // Only an APPROVED record is frozen. "Pending Review" stays editable so an
+  // employee can still correct a card while the manager has not acted yet —
+  // previously it was locked, and because the card controls were not visually
+  // disabled the dropdowns opened but every pick was silently discarded.
+  const isReadOnly = status === "Approved";
 
   const flagCount = useMemo(
     () =>
@@ -179,7 +183,13 @@ const MonthlyAllocations = () => {
       year,
       monthIndex: MONTH_NAMES.indexOf(month),
       streams,
-      status: status === "Needs Revision" ? "Needs Revision" : "Draft",
+      // Keep the record where it is in the workflow. Editing a submitted
+      // allocation must not silently yank it out of the manager's queue by
+      // demoting it back to Draft.
+      status:
+        status === "Needs Revision" || status === "Pending Review"
+          ? status
+          : "Draft",
       feedback: existingRecord?.feedback,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -423,9 +433,14 @@ const MonthlyAllocations = () => {
           submitLabel={
             status === "Needs Revision"
               ? "Resubmit to Manager"
-              : "Submit to Manager"
+              : status === "Pending Review"
+                ? "Awaiting Manager Review"
+                : "Submit to Manager"
           }
           disabled={isReadOnly}
+          // Already submitted: cards stay editable (edits autosave) but a
+          // second submit is a 409 on the API, so the button is parked.
+          submitDisabled={status === "Pending Review"}
           onAutoGenerate={handleAutoGenerate}
           showAutoGenerate={!isLocked && !isReadOnly}
           promptText={promptText}

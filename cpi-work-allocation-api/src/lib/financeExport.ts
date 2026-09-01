@@ -1,4 +1,4 @@
-import { resolveEnhancementTag } from 'cpi-work-allocation-shared';
+import { resolveEnhancementTag, isNonWorkingActivity } from 'cpi-work-allocation-shared';
 
 /**
  * Finance export mapping.
@@ -120,6 +120,20 @@ export function buildFinanceRows(
 
   for (const rec of records) {
     for (const act of rec.activities) {
+      // Non-working time (leave / holiday) never reaches Finance. The same
+      // shared predicate gates the frontend Excel/PDF export, so the two
+      // cannot report different percentages for one employee-month. Excluded
+      // rows stay in the database — this filters the SHEET, not the record.
+      if (
+        isNonWorkingActivity({
+          workCategory: act.streamCategory,
+          subCategory: act.subCategory,
+          workType: act.workType,
+        })
+      ) {
+        continue;
+      }
+
       // Post-flatten `streamCategory` IS the project ("Geniisys"). The
       // subCategory arm is a transitional guard: run against a database where
       // flatten-projects.ts has not been applied, this still emits the

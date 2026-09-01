@@ -32,6 +32,7 @@ import {
 } from "@/contexts/AllocationsContext";
 import { useJournal } from "@/contexts/JournalContext";
 import { toast } from "sonner";
+import { isNonWorkingActivity } from "@/lib/leaveClassification";
 
 type Timeframe = "Q1" | "Q2" | "Q3" | "Q4" | "Mid-Year" | "Annual";
 
@@ -130,6 +131,19 @@ const PerformanceReview = () => {
           tasks: [],
         };
         for (const act of stream.activities) {
+          // Leave / holiday contributes no performance signal — exclude from
+          // both the KRA percentage and the narrative task list.
+          if (
+            isNonWorkingActivity({
+              workCategory: stream.category,
+              subCategory:
+                (act as { subCategory?: string | null }).subCategory ?? null,
+              workType: act.workType,
+            })
+          ) {
+            continue;
+          }
+
           bucket.totalPct += act.percentage;
           bucket.tasks.push({
             description: act.description || act.workType,

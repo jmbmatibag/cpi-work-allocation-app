@@ -966,6 +966,31 @@ const ReviewEditor = ({ streams, onStreamsChange }: ReviewEditorProps) => {
     );
   };
 
+  /**
+   * Multi-field variant of `updateActivity`. Two `updateActivity` calls in one
+   * handler both derive from the SAME `streams` prop snapshot, so the second
+   * write reverts the first — which made Work Type look unselectable here too.
+   * Anything that changes more than one field must go through this.
+   */
+  const updateActivityFields = (
+    sIdx: number,
+    aIdx: number,
+    patch: Partial<ActivityData>,
+  ) => {
+    onStreamsChange(
+      streams.map((s, si) =>
+        si === sIdx
+          ? {
+              ...s,
+              activities: s.activities.map((a, ai) =>
+                ai === aIdx ? { ...a, ...patch } : a,
+              ),
+            }
+          : s,
+      ),
+    );
+  };
+
   const removeActivity = (sIdx: number, aIdx: number) => {
     const updated = streams
       .map((s, i) =>
@@ -1109,13 +1134,16 @@ const ReviewEditor = ({ streams, onStreamsChange }: ReviewEditorProps) => {
                         <Select
                           value={activity.workType}
                           onValueChange={(v) => {
-                            updateActivity(sIdx, aIdx, "workType", v);
                             // Leaving Specific Enhancement clears the tag —
                             // hiding the field alone would leave a stale value
-                            // on the record for Finance to pick up.
-                            if (!isSpecificEnhancement(v)) {
-                              updateActivity(sIdx, aIdx, "enhancementTag", null);
-                            }
+                            // on the record for Finance to pick up. Both fields
+                            // in ONE write; see `updateActivityFields`.
+                            updateActivityFields(sIdx, aIdx, {
+                              workType: v,
+                              ...(isSpecificEnhancement(v)
+                                ? {}
+                                : { enhancementTag: null }),
+                            });
                           }}
                           disabled={hasSubs && !activity.subCategory}
                         >
