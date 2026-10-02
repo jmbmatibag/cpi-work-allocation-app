@@ -72,6 +72,12 @@ export const SubmitAllocationSchema = z
     streams: z.array(WorkStreamDataSchema).optional(),
 })
     .default({});
+// Admin-only escape hatch: move an Approved allocation back to PendingReview
+// so its manager can correct it. The reason is mandatory because this undoes
+// a manager's sign-off — it lands in the audit timeline and the notifications.
+export const ReopenAllocationSchema = z.object({
+    reason: z.string().trim().min(1, 'A reason is required').max(1000),
+});
 export const FlagActivitySchema = z.object({
     reason: z.string().min(1),
 });

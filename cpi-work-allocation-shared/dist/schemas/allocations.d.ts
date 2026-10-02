@@ -101,6 +101,9 @@ export declare const SubmitAllocationSchema: z.ZodDefault<z.ZodObject<{
         expanded: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
     }, z.core.$strip>>>;
 }, z.core.$strip>>;
+export declare const ReopenAllocationSchema: z.ZodObject<{
+    reason: z.ZodString;
+}, z.core.$strip>;
 export declare const FlagActivitySchema: z.ZodObject<{
     reason: z.ZodString;
 }, z.core.$strip>;
@@ -142,6 +145,7 @@ export type ReturnForRevisionInput = z.infer<typeof ReturnForRevisionSchema>;
 export type ApproveAllocationInput = z.infer<typeof ApproveAllocationSchema>;
 export type SubmitAllocationInput = z.infer<typeof SubmitAllocationSchema>;
 export type FlagActivityInput = z.infer<typeof FlagActivitySchema>;
+export type ReopenAllocationInput = z.infer<typeof ReopenAllocationSchema>;
 export type ListAllocationsQuery = z.infer<typeof ListAllocationsQuerySchema>;
 export type ManagerEditInput = z.infer<typeof ManagerEditSchema>;
 export type AllocationStatusWire = z.infer<typeof AllocationStatusSchema>;

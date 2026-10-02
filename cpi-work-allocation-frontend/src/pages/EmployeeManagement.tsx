@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { DataTable, type ColumnDef } from "@/components/ui/DataTable";
 import { ImportEmployeesDialog } from "@/components/ImportEmployeesDialog";
 import { BulkActionBar } from "@/components/BulkActionBar";
+import { ReopenAllocationDialog } from "@/components/ReopenAllocationDialog";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,7 @@ import {
   Download,
   CheckCircle2,
   FileSpreadsheet,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -1314,6 +1316,7 @@ const RowActions = ({
   const [popOpen, setPopOpen] = useState(false);
   const [resendPending, setResendPending] = useState(false);
   const [reminderPending, setReminderPending] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
 
   const remindersOn = !emp.emailNotificationsExempt;
 
@@ -1466,6 +1469,19 @@ const RowActions = ({
           <BellOff className="h-3.5 w-3.5" />
         )}
       </button>
+      <button
+        onClick={() => setReopenOpen(true)}
+        disabled={!isApiMode}
+        className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+        aria-label={`Reopen an approved allocation for ${emp.firstName} ${emp.lastName}`}
+        title={!isApiMode ? "Not available in local mode" : "Reopen approved allocation for review"}
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+      </button>
+      <ReopenAllocationDialog
+        employee={reopenOpen ? emp : null}
+        onOpenChange={setReopenOpen}
+      />
       <button
         onClick={() => onEdit(emp)}
         className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"

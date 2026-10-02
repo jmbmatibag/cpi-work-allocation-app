@@ -1,4 +1,4 @@
-import { Send, AlertCircle, CheckCircle2, Pencil, Clock } from "lucide-react";
+import { Send, AlertCircle, CheckCircle2, Pencil, Clock, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ApiAllocationHistoryEvent } from "@/lib/apiClient";
 
@@ -43,6 +43,12 @@ const EVENT_CONFIG: Record<
     verb: "Edited by",
     iconClass: "text-muted-foreground",
     ringClass: "border-border bg-muted/40",
+  },
+  REOPENED: {
+    icon: RotateCcw,
+    verb: "Reopened for review by",
+    iconClass: "text-violet-500",
+    ringClass: "border-violet-500/20 bg-violet-500/5",
   },
 };
 

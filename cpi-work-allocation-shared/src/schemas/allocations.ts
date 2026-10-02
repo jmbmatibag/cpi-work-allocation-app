@@ -80,6 +80,13 @@ export const SubmitAllocationSchema = z
   })
   .default({});
 
+// Admin-only escape hatch: move an Approved allocation back to PendingReview
+// so its manager can correct it. The reason is mandatory because this undoes
+// a manager's sign-off — it lands in the audit timeline and the notifications.
+export const ReopenAllocationSchema = z.object({
+  reason: z.string().trim().min(1, 'A reason is required').max(1000),
+});
+
 export const FlagActivitySchema = z.object({
   reason: z.string().min(1),
 });
@@ -106,6 +113,7 @@ export type ReturnForRevisionInput = z.infer<typeof ReturnForRevisionSchema>;
 export type ApproveAllocationInput = z.infer<typeof ApproveAllocationSchema>;
 export type SubmitAllocationInput = z.infer<typeof SubmitAllocationSchema>;
 export type FlagActivityInput = z.infer<typeof FlagActivitySchema>;
+export type ReopenAllocationInput = z.infer<typeof ReopenAllocationSchema>;
 export type ListAllocationsQuery = z.infer<typeof ListAllocationsQuerySchema>;
 export type ManagerEditInput = z.infer<typeof ManagerEditSchema>;
 export type AllocationStatusWire = z.infer<typeof AllocationStatusSchema>;

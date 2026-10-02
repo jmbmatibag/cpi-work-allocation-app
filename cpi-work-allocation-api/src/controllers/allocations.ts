@@ -10,6 +10,7 @@ import {
   SubmitAllocationSchema,
   FlagActivitySchema,
   ManagerEditSchema,
+  ReopenAllocationSchema,
   ListAllocationsQuerySchema,
   IdParamSchema,
   AllocationActivityParamsSchema,
@@ -309,6 +310,7 @@ const ALLOCATION_TIMELINE_ACTIONS: Record<string, string> = {
   approve: 'APPROVED',
   return: 'REVISION_REQUESTED',
   'manager-edit': 'EDITED',
+  reopen: 'REOPENED',
 };
 
 export async function history(req: AuthRequest, res: Response): Promise<void> {
@@ -346,12 +348,14 @@ export async function history(req: AuthRequest, res: Response): Promise<void> {
   });
 
   const events = logs.map((log) => {
-    // `feedback` is only present on a return payload; keep the comment null for
-    // every other action so the UI shows a bare event with no comment block.
+    // `feedback` is only present on a return payload and `reason` on a reopen;
+    // keep the comment null for every other action so the UI shows a bare
+    // event with no comment block.
     const payload = (log.payload ?? {}) as Record<string, unknown>;
+    const rawComment = payload.feedback ?? payload.reason;
     const comment =
-      typeof payload.feedback === 'string' && payload.feedback.trim()
-        ? payload.feedback.trim()
+      typeof rawComment === 'string' && rawComment.trim()
+        ? rawComment.trim()
         : null;
 
     // Epic 3 — per-card flags captured on the return payload. Normalised to
@@ -930,6 +934,108 @@ export async function returnForRevision(req: AuthRequest, res: Response): Promis
       );
     });
   }
+}
+
+/**
+ * Admin-only: move an Approved allocation back to PendingReview so its manager
+ * can correct it (approve/return only ever act on PendingReview, so without
+ * this an approval is irreversible). The cards unlock, the record reappears in
+ * the manager's review queue, and the manager can edit + re-approve as usual.
+ *
+ * The approval's accountability stamp (actionedBy*) and reviewedAt are cleared
+ * because the record is no longer approved; the approval itself stays in the
+ * AuditLog, and the reopen is logged alongside it with the Admin's reason.
+ */
+export async function reopen(req: AuthRequest, res: Response): Promise<void> {
+  const { id } = getValid(req, IdParamSchema, 'params');
+  const body = getValid(req, ReopenAllocationSchema);
+
+  const record = await prisma.allocationRecord.findUnique({ where: { id } });
+  if (!record) {
+    res.status(404).json({ error: 'Allocation not found' });
+    return;
+  }
+  if (record.status !== 'Approved') {
+    res.status(409).json({ error: `Only an approved allocation can be reopened (current status "${record.status}")` });
+    return;
+  }
+
+  const admin = await prisma.user.findUniqueOrThrow({
+    where: { id: req.userId! },
+    select: { id: true, firstName: true, lastName: true },
+  });
+  const adminName = `${admin.firstName} ${admin.lastName}`;
+
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      // Status predicate doubles as the race guard — a concurrent reopen (or
+      // any other transition) matches zero rows and maps to a 409.
+      const result = await tx.allocationRecord.updateMany({
+        where: { id: record.id, status: 'Approved' },
+        data: {
+          status: 'PendingReview',
+          reviewedAt: null,
+          actionedById: null,
+          actionedByName: null,
+          actionedAt: null,
+        },
+      });
+      if (result.count === 0) throw new ConcurrentActionError();
+
+      await logAuditTx(tx, {
+        userId: admin.id,
+        action: 'reopen',
+        entity: 'AllocationRecord',
+        entityId: record.id,
+        payload: {
+          fromStatus: 'Approved',
+          toStatus: 'PendingReview',
+          reason: body.reason,
+          previouslyActionedById: record.actionedById,
+        },
+      });
+      return tx.allocationRecord.findUniqueOrThrow({
+        where: { id: record.id },
+        include: INCLUDE_FULL,
+      });
+    });
+  } catch (err) {
+    if (err instanceof ConcurrentActionError) {
+      res.status(409).json({ error: 'This allocation was changed by someone else. Refresh and try again.' });
+      return;
+    }
+    throw err;
+  }
+
+  res.json(toFrontendRecord(updated));
+
+  const employeeName = updated.employee
+    ? `${updated.employee.firstName} ${updated.employee.lastName}`
+    : 'an employee';
+
+  // Tell the manager it's back in their queue, and the employee why their
+  // approved allocation changed status.
+  if (updated.managerId) {
+    void createNotification({
+      targetUserId: updated.managerId,
+      title: 'Allocation Reopened for Review',
+      message:
+        `${adminName} reopened ${employeeName}'s ${updated.month} ${updated.year} allocation. ` +
+        `Reason: ${body.reason}`,
+      type: 'info',
+      actionUrl: '/team-hub',
+    });
+  }
+  void createNotification({
+    targetUserId: updated.employeeId,
+    title: 'Allocation Reopened',
+    message:
+      `Your approved ${updated.month} ${updated.year} allocation was reopened for review by ${adminName}. ` +
+      `Reason: ${body.reason}`,
+    type: 'info',
+    actionUrl: '/allocations',
+  });
 }
 
 export async function managerEdit(req: AuthRequest, res: Response): Promise<void> {

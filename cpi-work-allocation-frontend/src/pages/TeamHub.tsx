@@ -171,6 +171,32 @@ const sumStreamTotals = (streams: WorkStreamData[]): number =>
     0,
   );
 
+/**
+ * The backend persists each card's category from its STREAM's `category`
+ * (flattenStreams), not from `activity.workCategory`. The review editor only
+ * changes the card's own `workCategory`, so without this the card stays in
+ * its old stream and the save silently reverts the category. Re-bucket every
+ * card under the stream matching its `workCategory` before sending — order
+ * of first appearance is preserved and emptied streams drop out.
+ */
+const regroupStreamsByCategory = (
+  streams: WorkStreamData[],
+): WorkStreamData[] => {
+  const buckets = new Map<string, WorkStreamData>();
+  for (const s of streams) {
+    for (const act of s.activities) {
+      const category = act.workCategory || s.category;
+      let bucket = buckets.get(category);
+      if (!bucket) {
+        bucket = { ...s, category, activities: [] };
+        buckets.set(category, bucket);
+      }
+      bucket.activities.push({ ...act, workCategory: category });
+    }
+  }
+  return Array.from(buckets.values());
+};
+
 const TeamHub = () => {
   const { currentUser } = useAuth();
   // Only the manager's OWN reports feed the KPIs, analytics and calendar at
@@ -1673,7 +1699,7 @@ const SubmissionsPanel = ({
       );
       return;
     }
-    managerEdit(selected.id, editedStreams, {
+    managerEdit(selected.id, regroupStreamsByCategory(editedStreams), {
       userId: currentUser.id,
       userName: `${currentUser.firstName} ${currentUser.lastName}`,
     });
@@ -1693,7 +1719,7 @@ const SubmissionsPanel = ({
         );
         return;
       }
-      managerEdit(selected.id, editedStreams, {
+      managerEdit(selected.id, regroupStreamsByCategory(editedStreams), {
         userId: currentUser.id,
         userName: `${currentUser.firstName} ${currentUser.lastName}`,
       });
@@ -1740,7 +1766,7 @@ const SubmissionsPanel = ({
         );
         return;
       }
-      managerEdit(selected.id, editedStreams, {
+      managerEdit(selected.id, regroupStreamsByCategory(editedStreams), {
         userId: currentUser.id,
         userName: `${currentUser.firstName} ${currentUser.lastName}`,
       });

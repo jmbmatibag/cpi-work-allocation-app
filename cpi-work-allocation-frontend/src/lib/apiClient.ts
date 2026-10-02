@@ -98,13 +98,14 @@ export interface ApiAllocationRecord {
 export interface ApiAllocationHistoryEvent {
   id: number;
   // Stable, UI-facing category the timeline renders an icon/tone for.
-  eventType: 'SUBMITTED' | 'APPROVED' | 'REVISION_REQUESTED' | 'EDITED';
-  // Raw audit action ('submit' | 'approve' | 'return' | 'manager-edit').
+  eventType: 'SUBMITTED' | 'APPROVED' | 'REVISION_REQUESTED' | 'EDITED' | 'REOPENED';
+  // Raw audit action ('submit' | 'approve' | 'return' | 'manager-edit' | 'reopen').
   action: string;
   // The person who took the action. Null only for legacy/system rows whose
   // actor was later deleted (AuditLog.userId is SetNull on user delete).
   actor: { id: string; name: string } | null;
-  // Free-text comment left with the action (revision feedback). Null otherwise.
+  // Free-text comment left with the action (revision feedback, reopen reason).
+  // Null otherwise.
   comment: string | null;
   // Per-card flags captured on a REVISION_REQUESTED event — which specific
   // cards the manager flagged and the reason left on each. Empty for every
@@ -543,6 +544,10 @@ const allocations = {
       feedback,
       ...(expectedStatus ? { expectedStatus } : {}),
     }),
+
+  // Admin-only: Approved -> PendingReview, with a mandatory reason.
+  reopen: (id: string, reason: string) =>
+    post<ApiAllocationRecord>(`/api/allocations/${encodeURIComponent(id)}/reopen`, { reason }),
 
   managerEdit: (id: string, streams: ApiWorkStream[], clearFlags?: boolean) =>
     post<ApiAllocationRecord>(`/api/allocations/${encodeURIComponent(id)}/manager-edit`, {

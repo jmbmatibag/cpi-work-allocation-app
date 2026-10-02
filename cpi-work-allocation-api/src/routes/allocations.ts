@@ -8,6 +8,7 @@ import {
   SubmitAllocationSchema,
   FlagActivitySchema,
   ManagerEditSchema,
+  ReopenAllocationSchema,
   ListAllocationsQuerySchema,
   IdParamSchema,
   AllocationActivityParamsSchema,
@@ -53,6 +54,16 @@ router.post(
   validate(IdParamSchema, 'params'),
   validate(ManagerEditSchema),
   ctrl.managerEdit
+);
+
+// Admin-only: Approved -> PendingReview so the manager can correct a record
+// they already signed off. Managers deliberately can't do this themselves.
+router.post(
+  '/:id/reopen',
+  requireRole('Admin'),
+  validate(IdParamSchema, 'params'),
+  validate(ReopenAllocationSchema),
+  ctrl.reopen
 );
 
 router.patch(
